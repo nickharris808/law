@@ -18,6 +18,7 @@ import io
 import html
 import time
 import base64
+from pydantic import BaseModel
 
 # =========================
 # Configuration and Setup
@@ -488,10 +489,10 @@ def generate_case_info(user_data, document_summaries, image_contexts, ser_api_ke
     """Generate case information using OpenAI API and additional AI agents."""
     # Retrieve legal research data
     legal_research_data = legal_research(user_data, ser_api_key, ser_api_engine_id, serp_api_params)
-    
+
     # Retrieve case law data
-    case_law_data = case_law_retrieval(user_data, serp_api_key, serp_api_params)
-    
+    case_law_data = case_law_retrieval(user_data, ser_api_key, serp_api_params)
+
     # Construct prompt for OpenAI API
     prompt = f"""
 Based on the following user data, document summaries, image analyses, legal research, and case law, provide a JSON containing:
@@ -550,10 +551,39 @@ Case Law:
             frequency_penalty=0,
             presence_penalty=0,
             response_format={
-                "type": "text"
+                "type": "json_schema",
+                "json_schema": {
+                    "title": "CaseInfo",
+                    "type": "object",
+                    "properties": {
+                        "case_summary": {"type": "string"},
+                        "best_arguments": {"type": "string"},
+                        "relevant_laws": {"type": "string"},
+                        "medical_literature": {"type": "string"},
+                        "case_law": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "case_name": {"type": "string"},
+                                    "summary": {"type": "string"},
+                                    "outcome": {"type": "string"},
+                                    "date": {"type": "string"}
+                                },
+                                "required": ["case_name", "summary", "outcome", "date"],
+                                "additionalProperties": False
+                            }
+                        },
+                        "potential_payout": {"type": "number"},
+                        "likelihood_of_winning": {"type": "number"}
+                    },
+                    "required": ["case_summary", "best_arguments", "relevant_laws", "medical_literature", "case_law", "potential_payout", "likelihood_of_winning"],
+                    "additionalProperties": False
+                },
+                "strict": True
             }
         )
-        output_text = response['choices'][0]['content'][0]['text'].strip()
+        output_text = response['choices'][0]['message']['content']
         case_info = json.loads(output_text)
     except Exception as e:
         logging.error(f"Error generating case info: {e}")
@@ -826,6 +856,7 @@ def main():
                     })
                     st.session_state.step = 2
                     st.success("Personal information saved successfully!")
+                    st.experimental_rerun()  # Force rerun to reflect state change immediately
 
     # Step 2: Case Details
     elif st.session_state.step == 2:
@@ -850,7 +881,7 @@ def main():
                 value=st.session_state['user_data'].get('zip_code', ''),
                 help="Enter your ZIP or Postal Code."
             )
-            # Optional: Auto-populate City and State based on ZIP code
+            # Auto-Populate City and State based on ZIP code
             if zip_code:
                 location = get_location_from_zip(zip_code)
                 if location:
@@ -859,7 +890,11 @@ def main():
                     st.session_state['user_data']['incident_city'] = incident_city
                     st.session_state['user_data']['incident_state'] = incident_state
                     st.success(f"Location auto-filled: {incident_city}, {incident_state}")
+                    # Display auto-filled City and State as disabled inputs
+                    st.text_input("City *", value=incident_city, disabled=True)
+                    st.text_input("State/Province *", value=incident_state, disabled=True)
                 else:
+                    # Allow manual entry if auto-population fails
                     incident_city = st.text_input("City *", value=st.session_state['user_data'].get('incident_city', ''))
                     incident_state = st.text_input("State/Province *", value=st.session_state['user_data'].get('incident_state', ''))
             else:
@@ -873,50 +908,60 @@ def main():
             )
             damages_incurred = st.multiselect(
                 "Damages Incurred *",
-                ["Physical Injuries", "Emotional Distress", "Property Damage", "Financial Losses"],
+                [
+                    "Physical Injuries", 
+                    "Emotional Distress", 
+                    "Property Damage", 
+                    "Financial Losses",
+                    "Lost Wages",
+                    "Medical Expenses",
+                    "Pain and Suffering",
+                    "Other"
+                ],
                 default=st.session_state['user_data'].get('damages_incurred', []),
                 help="Select all types of damages you have incurred."
             )
-            # Replace Medical Bills Amount with Estimated Range or Upload Option
-            medical_bills_option = st.selectbox(
-                "Medical Bills *",
-                ["Provide an Estimated Range", "Upload Medical Bills"],
-                index=0  # Default selection
-            )
-            if medical_bills_option == "Provide an Estimated Range":
-                medical_bills_min = st.number_input(
-                    "Minimum Medical Bills Amount ($)",
-                    min_value=0,
-                    value=st.session_state['user_data'].get('medical_bills_min', 0)
-                )
-                medical_bills_max = st.number_input(
-                    "Maximum Medical Bills Amount ($)",
-                    min_value=0,
-                    value=st.session_state['user_data'].get('medical_bills_max', 0)
-                )
+            # Handle 'Other' option
+            if "Other" in damages_incurred:
+                other_damages = st.text_input("Please specify other damages:")
             else:
-                uploaded_medical_bills = st.file_uploader(
-                    "Upload Medical Bills",
-                    type=['pdf', 'jpg', 'png'],
-                    accept_multiple_files=False
+                other_damages = st.text_input("Please specify other damages:", disabled=True)
+            
+            # Unified Medical Bills Section
+            st.subheader("Medical Bills")
+            uploaded_medical_bills = st.file_uploader(
+                "Upload Medical Bills (PDF, JPG, PNG) *",
+                type=['pdf', 'jpg', 'png'],
+                accept_multiple_files=False,
+                help="Upload your medical bills. If you do not have the documents, please provide estimated amounts below."
+            )
+            if uploaded_medical_bills:
+                st.session_state['uploaded_medical_bills'] = uploaded_medical_bills
+                st.success("Medical bills uploaded successfully!")
+            else:
+                medical_bills_notes = st.text_area(
+                    "If you do not have medical bills to upload, please provide estimated amounts or notes:",
+                    value=st.session_state['user_data'].get('medical_bills_notes', ''),
+                    help="Provide an estimated range or any notes regarding your medical bills."
                 )
-                if uploaded_medical_bills:
-                    st.session_state['uploaded_medical_bills'] = uploaded_medical_bills
+            
             medical_treatment = st.text_area(
                 "Medical Treatment Received",
                 value=st.session_state['user_data'].get('medical_treatment', ''),
                 help="Describe the medical treatments you have received as a result of the incident."
             )
-            # Add Prompts or Examples for Best Argument
+            # Enhanced Best Argument Input with Guidance
             best_argument = st.text_area(
                 "What do you think is your best argument? *",
                 value=st.session_state['user_data'].get('best_argument', ''),
-                help="Describe the strongest point you believe supports your case. For example, 'The defendant was negligent in maintaining the property, leading to my injuries.'"
+                help="Provide your strongest argument supporting your case.\n\nFor example: 'The defendant failed to maintain the property, directly resulting in my injuries.'"
             )
+            # Structured Additional Comments
+            st.subheader("Additional Information")
             additional_comments = st.text_area(
-                "Additional Comments",
+                "Please provide any additional relevant information:",
                 value=st.session_state['user_data'].get('additional_comments', ''),
-                help="Provide any additional information that might be relevant to your case."
+                help="Please answer the following prompts:\n- Have there been any witnesses?\n- Are there any prior incidents related to this case?\n- Any other details you find pertinent."
             )
             submitted = st.form_submit_button("Next")
             
@@ -936,12 +981,11 @@ def main():
                     errors.append("Country is required.")
                 if not best_argument:
                     errors.append("Best argument is required.")
-                if medical_bills_option == "Provide an Estimated Range":
-                    if medical_bills_min > medical_bills_max:
-                        errors.append("Minimum medical bills amount cannot exceed maximum amount.")
-                else:
-                    if not st.session_state.get('uploaded_medical_bills', None):
-                        errors.append("Please upload your medical bills or provide an estimated range.")
+                if not uploaded_medical_bills and not st.session_state['user_data'].get('medical_bills_notes', ''):
+                    errors.append("Please upload your medical bills or provide estimated amounts/notes.")
+                
+                if "Other" in damages_incurred and not other_damages:
+                    errors.append("Please specify your other damages.")
                 
                 if errors:
                     for error in errors:
@@ -958,25 +1002,28 @@ def main():
                         'best_argument': best_argument,
                         'additional_comments': additional_comments
                     }
+                    if "Other" in damages_incurred:
+                        user_data_update['other_damages'] = other_damages
                     if zip_code and location:
                         user_data_update.update({
                             'incident_city': incident_city,
                             'incident_state': incident_state,
                             'incident_location': f"{incident_city}, {incident_state}, {incident_country}",
                         })
-                    if medical_bills_option == "Provide an Estimated Range":
+                    if uploaded_medical_bills:
                         user_data_update.update({
-                            'medical_bills_min': medical_bills_min,
-                            'medical_bills_max': medical_bills_max,
-                            'medical_bills_option': medical_bills_option
+                            'medical_bills_option': "Uploaded",
+                            'medical_bills_notes': ""
                         })
                     else:
                         user_data_update.update({
-                            'medical_bills_option': medical_bills_option
+                            'medical_bills_option': "Estimated",
+                            'medical_bills_notes': medical_bills_notes
                         })
                     st.session_state['user_data'].update(user_data_update)
                     st.session_state.step = 3
                     st.success("Case details saved successfully!")
+                    st.experimental_rerun()  # Force rerun to reflect state change immediately
 
     # Step 3: Uploads
     elif st.session_state.step == 3:
@@ -1004,12 +1051,14 @@ def main():
                     st.session_state['uploaded_images'] = uploaded_images
                     st.session_state.step = 4
                     st.success("Files uploaded successfully!")
+                    st.experimental_rerun()  # Force rerun to reflect state change immediately
 
         # Navigation Buttons
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Previous"):
                 st.session_state.step = 2
+                st.experimental_rerun()
 
     # Step 4: Consent
     elif st.session_state.step == 4:
@@ -1037,12 +1086,14 @@ def main():
                     })
                     st.session_state.step = 5
                     st.success("Consent information saved successfully!")
+                    st.experimental_rerun()  # Force rerun to reflect state change immediately
 
         # Navigation Buttons
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Previous"):
                 st.session_state.step = 3
+                st.experimental_rerun()
 
     # Step 5: Review and Submit
     elif st.session_state.step == 5:
@@ -1106,6 +1157,7 @@ def main():
         with col1:
             if st.button("Previous"):
                 st.session_state.step = 4
+                st.experimental_rerun()
 
         # Display results page
         if st.session_state['report_generated']:
