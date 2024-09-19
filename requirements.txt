@@ -3,7 +3,6 @@ openai
 python-dotenv
 PyPDF2
 docx2txt
-pytesseract
-Pillow
+pillow
 requests
 reportlab
