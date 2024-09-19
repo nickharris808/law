@@ -16,6 +16,7 @@ from reportlab.pdfgen import canvas
 import io
 import html
 import base64
+from serpapi import GoogleSearch  # Added import for SERP API
 
 # =========================
 # Helper Functions
@@ -216,15 +217,14 @@ def process_images(images, user_data):
                 contexts.append({'filename': image.name, 'context': "Error processing image."})
     return contexts
 
-def legal_research(user_data, ser_api_key, ser_api_engine_id, ser_api_params={}):
+def legal_research(user_data, serp_api_key, serp_api_params={}):
     """
-    Perform legal research using Google Custom Search API.
+    Perform legal research using SERP API with Google Scholar.
 
     Parameters:
     - user_data: Dictionary containing user information.
-    - ser_api_key: API key for Google Custom Search.
-    - ser_api_engine_id: Custom Search Engine ID.
-    - ser_api_params: Additional parameters for the search.
+    - serp_api_key: API key for SERP API.
+    - serp_api_params: Additional parameters for the search.
 
     Returns:
     - Dictionary containing summaries and links.
@@ -248,24 +248,25 @@ def legal_research(user_data, ser_api_key, ser_api_engine_id, ser_api_params={})
 
         for query in search_queries:
             params = {
-                "key": ser_api_key,
-                "cx": ser_api_engine_id,
+                "api_key": serp_api_key,
+                "engine": "google_scholar",
                 "q": query,
-                "num": 5
+                "hl": "en",
+                "num": 5  # Number of results to retrieve
             }
             # Update with any additional search parameters
-            params.update(ser_api_params)
-            response = requests.get(
-                "https://www.googleapis.com/customsearch/v1",
-                params=params
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if 'items' in data:
-                    for item in data['items']:
-                        summaries.append(item.get('snippet', ''))
-                        links.append(item.get('link', ''))
-            # else: Handle non-200 status codes as needed
+            params.update(serp_api_params)
+
+            search = GoogleSearch(params)
+            results = search.get_dict()
+
+            if 'scholar_results' in results:
+                for item in results['scholar_results']:
+                    summaries.append(item.get('snippet', ''))
+                    links.append(item.get('link', ''))
+            elif 'error' in results:
+                summaries.append(f"Error for query '{query}': {results['error']}")
+            # else: Handle cases where 'scholar_results' is not present
 
         # Compile findings
         compiled_summary = "\n".join(summaries)
@@ -291,13 +292,13 @@ def extract_medical_terms(uploaded_files):
         terms.update(extracted)
     return list(terms)
 
-def case_law_retrieval(user_data, ser_api_key, serp_api_params={}):
+def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
     """
     Retrieve relevant case law using SERP API for Google Scholar.
 
     Parameters:
     - user_data: Dictionary containing user information.
-    - ser_api_key: API key for SERP API.
+    - serp_api_key: API key for SERP API.
     - serp_api_params: Additional parameters for the search.
 
     Returns:
@@ -312,49 +313,45 @@ def case_law_retrieval(user_data, ser_api_key, serp_api_params={}):
 
         # Base SERP API parameters
         params = {
+            "api_key": serp_api_key,
             "engine": "google_scholar",
             "q": query,
-            "api_key": ser_api_key,
-            "num": 5
+            "hl": "en",
+            "num": 5  # Number of results to retrieve
         }
         # Update with any additional search parameters
         params.update(serp_api_params)
 
-        response = requests.get("https://serpapi.com/search", params=params)
-        if response.status_code == 200:
-            data = response.json()
-            if 'scholar_results' in data:
-                results = data['scholar_results']
-                cases = []
-                for result in results:
-                    case_name = result.get('title', 'N/A')
-                    summary = result.get('snippet', 'No summary available.')
-                    outcome = extract_case_outcome(summary)
-                    date = extract_case_date(result.get('publication_info', {}).get('date', 'N/A'))
-                    cases.append({
-                        "case_name": case_name,
-                        "summary": summary,
-                        "outcome": outcome,
-                        "date": date
-                    })
-            else:
-                return {
-                    "case_law": [],
-                    "potential_payout_estimate": 0
-                }
+        search = GoogleSearch(params)
+        results = search.get_dict()
 
-            # Analyze outcomes to estimate potential compensation ranges
-            potential_payout = analyze_potential_payout(cases)
-
-            return {
-                "case_law": cases,
-                "potential_payout_estimate": potential_payout
-            }
+        if 'scholar_results' in results:
+            results_list = results['scholar_results']
+            cases = []
+            for result in results_list:
+                case_name = result.get('title', 'N/A')
+                summary = result.get('snippet', 'No summary available.')
+                outcome = extract_case_outcome(summary)
+                date = extract_case_date(result.get('publication_info', {}).get('date', 'N/A'))
+                cases.append({
+                    "case_name": case_name,
+                    "summary": summary,
+                    "outcome": outcome,
+                    "date": date
+                })
         else:
             return {
                 "case_law": [],
                 "potential_payout_estimate": 0
             }
+
+        # Analyze outcomes to estimate potential compensation ranges
+        potential_payout = analyze_potential_payout(cases)
+
+        return {
+            "case_law": cases,
+            "potential_payout_estimate": potential_payout
+        }
     except Exception as e:
         return {
             "case_law": [],
@@ -398,14 +395,14 @@ def analyze_potential_payout(cases):
     else:
         return 0
 
-def generate_case_info(user_data, document_summaries, image_contexts, ser_api_key, ser_api_engine_id, serp_api_params={}):
+def generate_case_info(user_data, document_summaries, image_contexts, serp_api_key, serp_api_params={}):
     """Generate case information using OpenAI API and additional AI agents."""
     try:
         # Retrieve legal research data
-        legal_research_data = legal_research(user_data, ser_api_key, ser_api_engine_id, serp_api_params)
+        legal_research_data = legal_research(user_data, serp_api_key, serp_api_params)
 
         # Retrieve case law data
-        case_law_data = case_law_retrieval(user_data, ser_api_key, serp_api_params)
+        case_law_data = case_law_retrieval(user_data, serp_api_key, serp_api_params)
 
         # Construct prompt for OpenAI API
         prompt = f"""
@@ -1080,11 +1077,10 @@ def main():
 
                         # Retrieve SERP API credentials
                         serp_api_key = os.getenv("SERP_API_KEY")
-                        serp_api_engine_id = os.getenv("SERP_API_ENGINE_ID")
                         serp_api_params = {}  # Add any additional parameters if needed
 
-                        if not serp_api_key or not serp_api_engine_id:
-                            add_debug_message("❌ **SERP API credentials are missing. Legal research cannot be performed.**")
+                        if not serp_api_key:
+                            add_debug_message("❌ **SERP API key is missing. Legal research cannot be performed.**")
                             st.error("❌ **Legal research cannot be performed due to missing SERP API credentials.**")
                             st.stop()
 
@@ -1094,7 +1090,6 @@ def main():
                             document_summaries,
                             image_contexts,
                             serp_api_key,
-                            serp_api_engine_id,
                             serp_api_params
                         )
                         st.session_state['case_info'] = case_info
