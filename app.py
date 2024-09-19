@@ -16,7 +16,6 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import io
 import html
-import time
 import base64
 from pydantic import BaseModel
 
@@ -29,14 +28,14 @@ logging.basicConfig(
     filename='app.log',
     filemode='a',
     format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG  # Set to DEBUG to capture all levels of logs
 )
 
 # Load environment variables
 load_dotenv()
 
 # Initialize OpenAI client
-client = OpenAI()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Initialize session state variables
 if 'step' not in st.session_state:
@@ -67,45 +66,54 @@ def sanitize_text(text):
 def get_location_from_zip(zip_code):
     """Fetch city and state based on ZIP code using Zippopotam.us API."""
     try:
+        logging.debug(f"Fetching location for ZIP code: {zip_code}")
         response = requests.get(f"http://api.zippopotam.us/us/{zip_code}")  # Adjust country code as needed
         if response.status_code == 200:
             data = response.json()
-            return {
+            location = {
                 'city': data['places'][0]['place name'],
                 'state': data['places'][0]['state abbreviation']
             }
+            logging.debug(f"Location fetched: {location}")
+            return location
         else:
+            logging.warning(f"Failed to fetch location for ZIP code {zip_code}: Status Code {response.status_code}")
             return None
     except Exception as e:
-        logging.error(f"Error fetching location for ZIP code {zip_code}: {e}")
+        logging.error(f"Exception occurred while fetching location for ZIP code {zip_code}: {e}")
         return None
 
 def extract_text_from_document(file):
     """Extract text from uploaded documents."""
     content = ''
     try:
+        logging.debug(f"Extracting text from document: {file.name}")
         if file.type == 'application/pdf':
             # For PDFs
             reader = PyPDF2.PdfReader(file)
-            for page in reader.pages:
+            for page_num, page in enumerate(reader.pages, start=1):
                 text = page.extract_text()
                 if text:
                     content += text
+                logging.debug(f"Extracted text from page {page_num} of {file.name}")
         elif file.type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
             # For DOCX
             content = docx2txt.process(file)
+            logging.debug(f"Extracted text from DOCX: {file.name}")
         elif file.type == 'text/plain':
             content = str(file.read(), 'utf-8')
+            logging.debug(f"Extracted text from TXT: {file.name}")
         else:
-            # For other types, perform OCR with GPT-40-mini
+            # For other types, perform OCR with GPT-4
             content = ocr_document(file)
     except Exception as e:
         logging.error(f"Error extracting text from {file.name}: {e}")
     return content
 
 def ocr_document(file):
-    """Perform OCR on documents using GPT-40-mini."""
+    """Perform OCR on documents using OpenAI's GPT-4."""
     try:
+        logging.debug(f"Performing OCR on document: {file.name}")
         # Read the image file as bytes
         image_bytes = file.read()
         # Encode image to base64
@@ -120,53 +128,37 @@ def ocr_document(file):
         messages = [
             {
                 "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": system_prompt
-                    }
-                ]
+                "content": system_prompt
             },
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Please extract the text from the following image."
-                    },
-                    {
-                        "type": "image_base64",
-                        "image_base64": {
-                            "data": encoded_image
-                        }
-                    }
-                ]
+                "content": user_message
             }
         ]
 
         # Make OpenAI API call
         response = client.chat.completions.create(
-            model="gpt-40-mini",
+            model="gpt-4",  # Corrected model name
             messages=messages,
             temperature=0.0,
             max_tokens=1000,
             top_p=1,
             frequency_penalty=0,
-            presence_penalty=0,
-            response_format={
-                "type": "text"
-            }
+            presence_penalty=0
         )
+        logging.debug(f"OCR API response: {response}")
         # Extract text from response
-        extracted_text = response['choices'][0]['content'][0]['text']
+        extracted_text = response['choices'][0]['message']['content']
+        logging.debug(f"Extracted text from OCR: {extracted_text[:100]}...")  # Log first 100 chars
         return extracted_text
     except Exception as e:
-        logging.error(f"Error during OCR with OpenAI: {e}")
+        logging.error(f"Error during OCR with OpenAI for {file.name}: {e}")
         return "Error during OCR."
 
 def summarize_text(text):
     """Summarize text using OpenAI API."""
     try:
+        logging.debug("Summarizing text using OpenAI API.")
         system_prompt = "You are an AI assistant that summarizes documents."
 
         user_message = f"Please summarize the following text:\n\n{text}"
@@ -174,45 +166,35 @@ def summarize_text(text):
         messages = [
             {
                 "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": system_prompt
-                    }
-                ]
+                "content": system_prompt
             },
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": user_message
-                    }
-                ]
+                "content": user_message
             }
         ]
 
         response = client.chat.completions.create(
-            model="gpt-40-mini",
+            model="gpt-4",  # Corrected model name
             messages=messages,
             temperature=0.5,
             max_tokens=500,
             top_p=1,
             frequency_penalty=0,
-            presence_penalty=0,
-            response_format={
-                "type": "text"
-            }
+            presence_penalty=0
         )
-        summary = response['choices'][0]['content'][0]['text'].strip()
+        logging.debug(f"Summarization API response: {response}")
+        summary = response['choices'][0]['message']['content'].strip()
+        logging.debug(f"Generated summary: {summary[:100]}...")  # Log first 100 chars
         return summary
     except Exception as e:
         logging.error(f"Error in summarize_text: {e}")
         return "An error occurred while summarizing the document."
 
 def analyze_image(image_file, user_data):
-    """Analyze image using OpenAI's gpt-40-mini Vision."""
+    """Analyze image using OpenAI's GPT-4 Vision."""
     try:
+        logging.debug(f"Analyzing image: {image_file.name}")
         # Read the image file as bytes
         image_bytes = image_file.read()
         # Encode image to base64
@@ -228,44 +210,31 @@ Analyze the following image in the context of a {user_data.get('case_type', 'per
         messages = [
             {
                 "role": "system",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": system_prompt
-                    }
-                ]
+                "content": system_prompt
             },
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": user_message_text
-                    },
-                    {
-                        "type": "image_base64",
-                        "image_base64": {
-                            "data": encoded_image
-                        }
-                    }
-                ]
+                "content": user_message_text
+            },
+            {
+                "role": "user",
+                "content": f"![Image](data:image/png;base64,{encoded_image})"
             }
         ]
 
         # Make OpenAI API call
         response = client.chat.completions.create(
-            model="gpt-40-mini",
+            model="gpt-4",  # Corrected model name
             messages=messages,
             temperature=0.45,
             max_tokens=1500,
             top_p=1,
             frequency_penalty=0,
-            presence_penalty=0,
-            response_format={
-                "type": "text"
-            }
+            presence_penalty=0
         )
-        assistant_message = response['choices'][0]['content'][0]['text'].strip()
+        logging.debug(f"Image analysis API response: {response}")
+        assistant_message = response['choices'][0]['message']['content'].strip()
+        logging.debug(f"Generated image analysis: {assistant_message[:100]}...")  # Log first 100 chars
         return assistant_message
     except Exception as e:
         logging.error(f"Error analyzing image {image_file.name}: {e}")
@@ -281,17 +250,20 @@ def process_documents(documents):
             try:
                 summary = future.result()
                 summaries.append({'filename': file.name, 'summary': summary})
+                logging.debug(f"Processed document: {file.name}")
             except Exception as e:
                 logging.error(f"Error processing document {file.name}: {e}")
     return summaries
 
 def process_single_document(file):
     """Process a single document: extract text and summarize."""
+    logging.debug(f"Processing single document: {file.name}")
     text = extract_text_from_document(file)
     if text:
         summary = summarize_text(text)
     else:
         summary = "No text extracted from the document."
+    logging.debug(f"Summary for {file.name}: {summary[:100]}...")
     return summary
 
 def process_images(images, user_data):
@@ -304,6 +276,7 @@ def process_images(images, user_data):
             try:
                 context = future.result()
                 contexts.append({'filename': image.name, 'context': context})
+                logging.debug(f"Processed image: {image.name}")
             except Exception as e:
                 logging.error(f"Error processing image {image.name}: {e}")
                 contexts.append({'filename': image.name, 'context': "Error processing image."})
@@ -323,11 +296,13 @@ def legal_research(user_data, ser_api_key, ser_api_engine_id, ser_api_params={})
     - Dictionary containing summaries and links.
     """
     try:
+        logging.debug("Starting legal research using Google Custom Search API.")
         case_type = user_data.get('case_type', 'personal injury')
         location = user_data.get('incident_location', '')
 
         # Extract medical terms from medical bills if available
         medical_terms = extract_medical_terms(st.session_state.get('uploaded_medical_bills', []))
+        logging.debug(f"Extracted medical terms: {medical_terms}")
 
         # Construct search queries
         search_queries = [
@@ -335,6 +310,7 @@ def legal_research(user_data, ser_api_key, ser_api_engine_id, ser_api_params={})
             f"Relevant statutes for {case_type} cases in {location}",
             f"{' '.join(medical_terms)} treatments in {location}"
         ]
+        logging.debug(f"Search queries: {search_queries}")
 
         summaries = []
         links = []
@@ -348,10 +324,12 @@ def legal_research(user_data, ser_api_key, ser_api_engine_id, ser_api_params={})
             }
             # Update with any additional search parameters
             params.update(ser_api_params)
+            logging.debug(f"Performing search with query: {query}")
             response = requests.get(
                 "https://www.googleapis.com/customsearch/v1",
                 params=params
             )
+            logging.debug(f"Google Custom Search API response: {response.status_code}")
             data = response.json()
             if 'items' in data:
                 for item in data['items']:
@@ -364,6 +342,7 @@ def legal_research(user_data, ser_api_key, ser_api_engine_id, ser_api_params={})
         compiled_summary = "\n".join(summaries)
         compiled_links = "\n".join(links)
 
+        logging.debug("Legal research completed successfully.")
         return {
             "legal_research_summary": compiled_summary,
             "legal_research_links": compiled_links
@@ -379,10 +358,12 @@ def extract_medical_terms(uploaded_files):
     """Extract medical terms from uploaded medical bills or related documents."""
     terms = set()
     for file in uploaded_files:
+        logging.debug(f"Extracting medical terms from file: {file.name}")
         text = extract_text_from_document(file)
         # Simple example: extract capitalized terms (could be enhanced with NLP)
         extracted = [word for word in text.split() if word.istitle()]
         terms.update(extracted)
+    logging.debug(f"Extracted medical terms: {terms}")
     return list(terms)
 
 def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
@@ -398,11 +379,13 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
     - Dictionary containing case law and potential payout estimate.
     """
     try:
+        logging.debug("Starting case law retrieval using SERP API.")
         case_type = user_data.get('case_type', 'personal injury')
         location = user_data.get('incident_location', '')
 
         # Construct search query
         query = f"case precedents for {case_type} in {location}"
+        logging.debug(f"Case law search query: {query}")
 
         # Base SERP API parameters
         params = {
@@ -412,9 +395,11 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
             "num": 5
         }
         # Update with any additional search parameters
-        params.update(serp_api_params)
+        params.update(ser_api_params)
 
+        logging.debug(f"Performing SERP API search with params: {params}")
         response = requests.get("https://serpapi.com/search", params=params)
+        logging.debug(f"SERP API response: {response.status_code}")
         data = response.json()
 
         if 'scholar_results' in data:
@@ -431,6 +416,7 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
                     "outcome": outcome,
                     "date": date
                 })
+                logging.debug(f"Retrieved case: {case_name}, Outcome: {outcome}, Date: {date}")
         else:
             cases = []
             logging.warning("No scholar_results found in SERP API response.")
@@ -438,6 +424,7 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
         # Analyze outcomes to estimate potential compensation ranges
         potential_payout = analyze_potential_payout(cases)
 
+        logging.debug("Case law retrieval completed successfully.")
         return {
             "case_law": cases,
             "potential_payout_estimate": potential_payout
@@ -481,16 +468,20 @@ def analyze_potential_payout(cases):
             payouts.append(50000)  # Example value
     if payouts:
         average_payout = sum(payouts) / len(payouts)
+        logging.debug(f"Estimated potential payout based on cases: {average_payout}")
         return average_payout
     else:
+        logging.debug("No successful cases found to estimate potential payout.")
         return 0
 
 def generate_case_info(user_data, document_summaries, image_contexts, ser_api_key, ser_api_engine_id, serp_api_params={}):
     """Generate case information using OpenAI API and additional AI agents."""
     # Retrieve legal research data
+    logging.debug("Generating legal research data.")
     legal_research_data = legal_research(user_data, ser_api_key, ser_api_engine_id, serp_api_params)
 
     # Retrieve case law data
+    logging.debug("Generating case law data.")
     case_law_data = case_law_retrieval(user_data, ser_api_key, serp_api_params)
 
     # Construct prompt for OpenAI API
@@ -523,68 +514,29 @@ Case Law:
     messages = [
         {
             "role": "system",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "You are an AI assistant that compiles comprehensive case information based on provided data."
-                }
-            ]
+            "content": "You are an AI assistant that compiles comprehensive case information based on provided data."
         },
         {
             "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": prompt
-                }
-            ]
+            "content": prompt
         }
     ]
 
     try:
+        logging.debug("Sending case information to OpenAI API.")
         response = client.chat.completions.create(
-            model="gpt-40-mini",
+            model="gpt-4",  # Corrected model name
             messages=messages,
             temperature=0.5,
             max_tokens=16383,
             top_p=1,
             frequency_penalty=0,
-            presence_penalty=0,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "title": "CaseInfo",
-                    "type": "object",
-                    "properties": {
-                        "case_summary": {"type": "string"},
-                        "best_arguments": {"type": "string"},
-                        "relevant_laws": {"type": "string"},
-                        "medical_literature": {"type": "string"},
-                        "case_law": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "case_name": {"type": "string"},
-                                    "summary": {"type": "string"},
-                                    "outcome": {"type": "string"},
-                                    "date": {"type": "string"}
-                                },
-                                "required": ["case_name", "summary", "outcome", "date"],
-                                "additionalProperties": False
-                            }
-                        },
-                        "potential_payout": {"type": "number"},
-                        "likelihood_of_winning": {"type": "number"}
-                    },
-                    "required": ["case_summary", "best_arguments", "relevant_laws", "medical_literature", "case_law", "potential_payout", "likelihood_of_winning"],
-                    "additionalProperties": False
-                },
-                "strict": True
-            }
+            presence_penalty=0
         )
+        logging.debug(f"OpenAI API response: {response}")
         output_text = response['choices'][0]['message']['content']
         case_info = json.loads(output_text)
+        logging.debug("Case information generated successfully.")
     except Exception as e:
         logging.error(f"Error generating case info: {e}")
         case_info = {
@@ -601,9 +553,14 @@ Case Law:
 def add_to_mailchimp(user_data, case_info):
     """Add user to MailChimp list."""
     try:
+        logging.debug("Attempting to subscribe user to MailChimp.")
         MAILCHIMP_API_KEY = os.getenv("MAILCHIMP_API_KEY")
         MAILCHIMP_LIST_ID = os.getenv("MAILCHIMP_LIST_ID")
         MAILCHIMP_DC = os.getenv("MAILCHIMP_DC")
+
+        if not all([MAILCHIMP_API_KEY, MAILCHIMP_LIST_ID, MAILCHIMP_DC]):
+            logging.error("MailChimp API credentials are not fully set.")
+            return False
 
         url = f"https://{MAILCHIMP_DC}.api.mailchimp.com/3.0/lists/{MAILCHIMP_LIST_ID}/members"
         data = {
@@ -617,8 +574,11 @@ def add_to_mailchimp(user_data, case_info):
             }
         }
         auth = ('anystring', MAILCHIMP_API_KEY)
+        logging.debug(f"MailChimp subscription payload: {json.dumps(data)}")
         response = requests.post(url, auth=auth, json=data)
+        logging.debug(f"MailChimp API response: {response.status_code} - {response.text}")
         if response.status_code in [200, 201]:
+            logging.debug("User subscribed to MailChimp successfully.")
             return True
         else:
             logging.error(f"MailChimp subscription failed: {response.status_code} - {response.text}")
@@ -629,155 +589,169 @@ def add_to_mailchimp(user_data, case_info):
 
 def generate_pdf_report(case_info, document_summaries, image_contexts):
     """Generate a PDF report using reportlab."""
+    logging.debug("Generating PDF report.")
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
 
-    # Title
-    c.setFont("Helvetica-Bold", 20)
-    c.drawCentredString(width / 2, height - 50, "Case Analysis Report")
+    try:
+        # Title
+        c.setFont("Helvetica-Bold", 20)
+        c.drawCentredString(width / 2, height - 50, "Case Analysis Report")
 
-    # Case Summary
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, height - 80, "Case Summary:")
-    c.setFont("Helvetica", 12)
-    text = c.beginText(50, height - 100)
-    for line in case_info.get('case_summary', '').split('\n'):
-        text.textLine(line)
-    c.drawText(text)
+        # Case Summary
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, height - 80, "Case Summary:")
+        c.setFont("Helvetica", 12)
+        text = c.beginText(50, height - 100)
+        for line in case_info.get('case_summary', '').split('\n'):
+            text.textLine(line)
+        c.drawText(text)
 
-    # Best Arguments
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, height - 200, "Best Arguments:")
-    c.setFont("Helvetica", 12)
-    text = c.beginText(50, height - 220)
-    for line in case_info.get('best_arguments', '').split('\n'):
-        text.textLine(line)
-    c.drawText(text)
+        # Best Arguments
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, height - 200, "Best Arguments:")
+        c.setFont("Helvetica", 12)
+        text = c.beginText(50, height - 220)
+        for line in case_info.get('best_arguments', '').split('\n'):
+            text.textLine(line)
+        c.drawText(text)
 
-    # Relevant Laws
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, height - 320, "Relevant Laws:")
-    c.setFont("Helvetica", 12)
-    text = c.beginText(50, height - 340)
-    for line in case_info.get('relevant_laws', '').split('\n'):
-        text.textLine(line)
-    c.drawText(text)
-    
-    # Medical Literature
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, height - 440, "Medical Literature:")
-    c.setFont("Helvetica", 12)
-    text = c.beginText(50, height - 460)
-    for line in case_info.get('medical_literature', '').split('\n'):
-        text.textLine(line)
-    c.drawText(text)
+        # Relevant Laws
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, height - 320, "Relevant Laws:")
+        c.setFont("Helvetica", 12)
+        text = c.beginText(50, height - 340)
+        for line in case_info.get('relevant_laws', '').split('\n'):
+            text.textLine(line)
+        c.drawText(text)
+        
+        # Medical Literature
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, height - 440, "Medical Literature:")
+        c.setFont("Helvetica", 12)
+        text = c.beginText(50, height - 460)
+        for line in case_info.get('medical_literature', '').split('\n'):
+            text.textLine(line)
+        c.drawText(text)
 
-    # Case Law
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, height - 560, "Case Law:")
-    y_position = height - 580
-    for case in case_info.get('case_law', []):
-        if y_position < 100:
-            c.showPage()
-            y_position = height - 50
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(60, y_position, f"Case Name: {case['case_name']}")
-        y_position -= 20
-        c.setFont("Helvetica", 10)
-        c.drawString(70, y_position, f"Summary: {case['summary']}")
-        y_position -= 15
-        c.drawString(70, y_position, f"Outcome: {case['outcome']}")
-        y_position -= 15
-        c.drawString(70, y_position, f"Date: {case['date']}")
-        y_position -= 25
-
-    # Document Summaries
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, y_position, "Document Summaries:")
-    y_position -= 20
-    for doc in document_summaries:
-        if y_position < 100:
-            c.showPage()
-            y_position = height - 50
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(60, y_position, f"{doc['filename']}:")
-        y_position -= 20
-        c.setFont("Helvetica", 10)
-        for line in doc['summary'].split('\n'):
-            c.drawString(70, y_position, line)
+        # Case Law
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, height - 560, "Case Law:")
+        y_position = height - 580
+        for case in case_info.get('case_law', []):
+            if y_position < 100:
+                c.showPage()
+                y_position = height - 50
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(60, y_position, f"Case Name: {case['case_name']}")
+            y_position -= 20
+            c.setFont("Helvetica", 10)
+            c.drawString(70, y_position, f"Summary: {case['summary']}")
             y_position -= 15
-        y_position -= 10
+            c.drawString(70, y_position, f"Outcome: {case['outcome']}")
+            y_position -= 15
+            c.drawString(70, y_position, f"Date: {case['date']}")
+            y_position -= 25
 
-    # Image Analyses
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, y_position, "Image Analyses:")
-    y_position -= 20
-    for img in image_contexts:
-        if y_position < 100:
+        # Document Summaries
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, y_position, "Document Summaries:")
+        y_position -= 20
+        for doc in document_summaries:
+            if y_position < 100:
+                c.showPage()
+                y_position = height - 50
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(60, y_position, f"{doc['filename']}:")
+            y_position -= 20
+            c.setFont("Helvetica", 10)
+            for line in doc['summary'].split('\n'):
+                c.drawString(70, y_position, line)
+                y_position -= 15
+            y_position -= 10
+
+        # Image Analyses
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, y_position, "Image Analyses:")
+        y_position -= 20
+        for img in image_contexts:
+            if y_position < 100:
+                c.showPage()
+                y_position = height - 50
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(60, y_position, f"{img['filename']}:")
+            y_position -= 20
+            c.setFont("Helvetica", 10)
+            for line in img['context'].split('\n'):
+                c.drawString(70, y_position, line)
+                y_position -= 15
+            y_position -= 10
+
+        # Potential Payout and Likelihood
+        if y_position < 150:
             c.showPage()
             y_position = height - 50
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(60, y_position, f"{img['filename']}:")
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(50, y_position, "Potential Payout and Likelihood:")
         y_position -= 20
-        c.setFont("Helvetica", 10)
-        for line in img['context'].split('\n'):
-            c.drawString(70, y_position, line)
-            y_position -= 15
-        y_position -= 10
+        c.setFont("Helvetica", 12)
+        c.drawString(60, y_position, f"Estimated Potential Payout: ${case_info.get('potential_payout', 0)}")
+        y_position -= 20
+        c.drawString(60, y_position, f"Likelihood of Winning: {case_info.get('likelihood_of_winning', 0)}%")
 
-    # Potential Payout and Likelihood
-    if y_position < 150:
-        c.showPage()
-        y_position = height - 50
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, y_position, "Potential Payout and Likelihood:")
-    y_position -= 20
-    c.setFont("Helvetica", 12)
-    c.drawString(60, y_position, f"Estimated Potential Payout: ${case_info.get('potential_payout', 0)}")
-    y_position -= 20
-    c.drawString(60, y_position, f"Likelihood of Winning: {case_info.get('likelihood_of_winning', 0)}%")
-
-    c.save()
-    buffer.seek(0)
-    return buffer
+        c.save()
+        buffer.seek(0)
+        logging.debug("PDF report generated successfully.")
+        return buffer
+    except Exception as e:
+        logging.error(f"Error generating PDF report: {e}")
+        return io.BytesIO()  # Return empty buffer in case of error
 
 def generate_markdown_report(case_info, document_summaries, image_contexts):
     """Generate a markdown report."""
-    report_content = f"# Case Analysis Report\n\n"
+    try:
+        logging.debug("Generating Markdown report.")
+        report_content = f"# Case Analysis Report\n\n"
 
-    report_content += f"## Case Summary\n{sanitize_text(case_info.get('case_summary', ''))}\n\n"
+        report_content += f"## Case Summary\n{sanitize_text(case_info.get('case_summary', ''))}\n\n"
 
-    report_content += f"## Best Arguments\n{sanitize_text(case_info.get('best_arguments', ''))}\n\n"
+        report_content += f"## Best Arguments\n{sanitize_text(case_info.get('best_arguments', ''))}\n\n"
 
-    report_content += f"## Relevant Laws\n{sanitize_text(case_info.get('relevant_laws', ''))}\n\n"
-    
-    report_content += f"## Medical Literature\n{sanitize_text(case_info.get('medical_literature', ''))}\n\n"
+        report_content += f"## Relevant Laws\n{sanitize_text(case_info.get('relevant_laws', ''))}\n\n"
+        
+        report_content += f"## Medical Literature\n{sanitize_text(case_info.get('medical_literature', ''))}\n\n"
 
-    report_content += f"## Case Law\n"
-    for case in case_info.get('case_law', []):
-        report_content += f"### {sanitize_text(case['case_name'])}\n"
-        report_content += f"**Summary:** {sanitize_text(case['summary'])}\n\n"
-        report_content += f"**Outcome:** {sanitize_text(case['outcome'])}\n\n"
-        report_content += f"**Date:** {sanitize_text(case['date'])}\n\n"
+        report_content += f"## Case Law\n"
+        for case in case_info.get('case_law', []):
+            report_content += f"### {sanitize_text(case['case_name'])}\n"
+            report_content += f"**Summary:** {sanitize_text(case['summary'])}\n\n"
+            report_content += f"**Outcome:** {sanitize_text(case['outcome'])}\n\n"
+            report_content += f"**Date:** {sanitize_text(case['date'])}\n\n"
 
-    report_content += f"## Document Summaries\n"
-    for doc in document_summaries:
-        report_content += f"### {sanitize_text(doc['filename'])}\n{sanitize_text(doc['summary'])}\n\n"
+        report_content += f"## Document Summaries\n"
+        for doc in document_summaries:
+            report_content += f"### {sanitize_text(doc['filename'])}\n{sanitize_text(doc['summary'])}\n\n"
 
-    report_content += f"## Image Analyses\n"
-    for img in image_contexts:
-        report_content += f"### {sanitize_text(img['filename'])}\n{sanitize_text(img['context'])}\n\n"
+        report_content += f"## Image Analyses\n"
+        for img in image_contexts:
+            report_content += f"### {sanitize_text(img['filename'])}\n{sanitize_text(img['context'])}\n\n"
 
-    report_content += f"## Potential Payout and Likelihood\n"
-    report_content += f"**Estimated Potential Payout:** ${case_info.get('potential_payout', 0)}\n\n"
-    report_content += f"**Likelihood of Winning:** {case_info.get('likelihood_of_winning', 0)}%\n\n"
+        report_content += f"## Potential Payout and Likelihood\n"
+        report_content += f"**Estimated Potential Payout:** ${case_info.get('potential_payout', 0)}\n\n"
+        report_content += f"**Likelihood of Winning:** {case_info.get('likelihood_of_winning', 0)}%\n\n"
 
-    return report_content
+        logging.debug("Markdown report generated successfully.")
+        return report_content
+    except Exception as e:
+        logging.error(f"Error generating Markdown report: {e}")
+        return "# Case Analysis Report\n\nAn error occurred while generating the report."
 
 def initialize_chat_interface(case_info, document_summaries):
     """Initialize the chat interface with system prompt."""
-    system_prompt = f"""
+    try:
+        logging.debug("Initializing chat interface.")
+        system_prompt = f"""
 You are a legal assistant AI that has analyzed the following case information, documents, legal research, and case law:
 
 Case Summary:
@@ -800,17 +774,15 @@ Document Summaries:
 
 Use this information to answer the user's questions accurately and helpfully.
     """
-    st.session_state['chat_history'] = [
-        {
-            'role': 'system',
-            'content': [
-                {
-                    'type': 'text',
-                    'text': system_prompt
-                }
-            ]
-        }
-    ]
+        st.session_state['chat_history'] = [
+            {
+                'role': 'system',
+                'content': system_prompt
+            }
+        ]
+        logging.debug("Chat interface initialized.")
+    except Exception as e:
+        logging.error(f"Error initializing chat interface: {e}")
 
 # =========================
 # Main Application
@@ -834,6 +806,7 @@ def main():
             submitted = st.form_submit_button("Next")
             
             if submitted:
+                logging.debug("Personal Information form submitted.")
                 errors = []
                 if not first_name:
                     errors.append("First name is required.")
@@ -847,6 +820,7 @@ def main():
                 if errors:
                     for error in errors:
                         st.error(error)
+                        logging.warning(f"Personal Information error: {error}")
                 else:
                     st.session_state['user_data'].update({
                         'first_name': first_name,
@@ -856,6 +830,7 @@ def main():
                     })
                     st.session_state.step = 2
                     st.success("Personal information saved successfully!")
+                    logging.info("Personal information saved and moved to Step 2.")
 
     # Step 2: Case Details
     elif st.session_state.step == 2:
@@ -888,6 +863,7 @@ def main():
                     incident_state = location.get('state', '')
                     st.session_state['user_data']['incident_city'] = incident_city
                     st.session_state['user_data']['incident_state'] = incident_state
+                    st.session_state['user_data']['incident_location'] = f"{incident_city}, {incident_state}, {st.session_state['user_data'].get('incident_country', '')}"
                     st.success(f"Location auto-filled: {incident_city}, {incident_state}")
                     # Display auto-filled City and State as disabled inputs
                     st.text_input("City *", value=incident_city, disabled=True)
@@ -965,6 +941,7 @@ def main():
             submitted = st.form_submit_button("Next")
             
             if submitted:
+                logging.debug("Case Details form submitted.")
                 errors = []
                 if not incident_description:
                     errors.append("Description of incident is required.")
@@ -972,9 +949,9 @@ def main():
                     errors.append("At least one type of damage must be selected.")
                 if not zip_code:
                     errors.append("ZIP/Postal Code is required.")
-                if not incident_city:
+                if not incident_city and (zip_code and not location):
                     errors.append("City is required.")
-                if not incident_state:
+                if not incident_state and (zip_code and not location):
                     errors.append("State/Province is required.")
                 if not incident_country:
                     errors.append("Country is required.")
@@ -989,6 +966,7 @@ def main():
                 if errors:
                     for error in errors:
                         st.error(error)
+                        logging.warning(f"Case Details error: {error}")
                 else:
                     user_data_update = {
                         'case_type': case_type,
@@ -1022,6 +1000,7 @@ def main():
                     st.session_state['user_data'].update(user_data_update)
                     st.session_state.step = 3
                     st.success("Case details saved successfully!")
+                    logging.info("Case details saved and moved to Step 3.")
 
     # Step 3: Uploads
     elif st.session_state.step == 3:
@@ -1042,19 +1021,24 @@ def main():
             submitted = st.form_submit_button("Next")
             
             if submitted:
+                logging.debug("Uploads form submitted.")
                 if not uploaded_documents and not uploaded_images and not st.session_state.get('uploaded_medical_bills', None):
                     st.error("Please upload at least one document, image, or medical bill.")
+                    logging.warning("No uploads provided.")
                 else:
                     st.session_state['uploaded_documents'] = uploaded_documents
                     st.session_state['uploaded_images'] = uploaded_images
                     st.session_state.step = 4
                     st.success("Files uploaded successfully!")
+                    logging.info("Files uploaded and moved to Step 4.")
 
         # Navigation Buttons
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Previous"):
                 st.session_state.step = 2
+                logging.debug("Navigated back to Step 2.")
+                st.experimental_rerun()
 
     # Step 4: Consent
     elif st.session_state.step == 4:
@@ -1073,8 +1057,10 @@ def main():
             submitted = st.form_submit_button("Next")
             
             if submitted:
+                logging.debug("Consent form submitted.")
                 if not disclaimer_agreed:
                     st.error("You must agree to the terms and conditions to proceed.")
+                    logging.warning("User did not agree to terms and conditions.")
                 else:
                     st.session_state['user_data'].update({
                         'disclaimer_agreed': disclaimer_agreed,
@@ -1082,12 +1068,15 @@ def main():
                     })
                     st.session_state.step = 5
                     st.success("Consent information saved successfully!")
+                    logging.info("Consent information saved and moved to Step 5.")
 
         # Navigation Buttons
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Previous"):
                 st.session_state.step = 3
+                logging.debug("Navigated back to Step 3.")
+                st.experimental_rerun()
 
     # Step 5: Review and Submit
     elif st.session_state.step == 5:
@@ -1099,6 +1088,7 @@ def main():
             if not st.session_state['report_generated']:
                 with st.spinner("Processing your case..."):
                     try:
+                        logging.debug("Starting report generation process.")
                         # Process documents and images concurrently
                         document_summaries = process_documents(st.session_state.get('uploaded_documents', []))
                         image_contexts = process_images(st.session_state.get('uploaded_images', []), st.session_state['user_data'])
@@ -1109,6 +1099,11 @@ def main():
                         serp_api_key = os.getenv("SERP_API_KEY")
                         serp_api_engine_id = os.getenv("SERP_API_ENGINE_ID")
                         serp_api_params = {}  # Add any additional parameters if needed
+
+                        if not serp_api_key or not serp_api_engine_id:
+                            logging.error("SERP API credentials are not fully set.")
+                            st.error("Legal research cannot be performed due to missing SERP API credentials.")
+                            return
 
                         # Generate case info with AI agents
                         case_info = generate_case_info(
@@ -1128,6 +1123,7 @@ def main():
                                 st.success("You have been subscribed to our mailing list.")
                             else:
                                 st.error("There was an error subscribing you to our mailing list.")
+                                logging.error("MailChimp subscription failed.")
 
                         # Initialize chat interface
                         initialize_chat_interface(case_info, document_summaries)
@@ -1142,6 +1138,7 @@ def main():
 
                         st.session_state['report_generated'] = True
                         st.success("Your AI report has been generated!")
+                        logging.info("AI report generated successfully.")
                     except Exception as e:
                         logging.error(f"Error during report generation: {e}")
                         st.error("An error occurred while generating your report. Please try again later.")
@@ -1151,6 +1148,8 @@ def main():
         with col1:
             if st.button("Previous"):
                 st.session_state.step = 4
+                logging.debug("Navigated back to Step 4.")
+                st.experimental_rerun()
 
         # Display results page
         if st.session_state['report_generated']:
@@ -1225,8 +1224,10 @@ def main():
                 submitted = st.form_submit_button("Send")
                 
                 if submitted and user_input:
+                    logging.debug("Chat form submitted.")
                     # Append user message
                     st.session_state['chat_history'].append({'role': 'user', 'content': user_input})
+                    logging.debug(f"User input: {user_input}")
 
                     # Prepare messages for OpenAI API
                     messages = st.session_state['chat_history']
@@ -1234,21 +1235,21 @@ def main():
                     # API call
                     try:
                         with st.spinner("Generating response..."):
+                            logging.debug("Sending chat messages to OpenAI API.")
                             response = client.chat.completions.create(
-                                model="gpt-40-mini",
+                                model="gpt-4",  # Corrected model name
                                 messages=messages,
                                 temperature=0.45,
-                                max_tokens=16383,
+                                max_tokens=1500,
                                 top_p=1,
                                 frequency_penalty=0,
-                                presence_penalty=0,
-                                response_format={
-                                    "type": "text"
-                                }
+                                presence_penalty=0
                             )
-                            assistant_message = response['choices'][0]['content'][0]['text'].strip()
+                            logging.debug(f"Chat API response: {response}")
+                            assistant_message = response['choices'][0]['message']['content'].strip()
                             st.session_state['chat_history'].append({'role': 'assistant', 'content': assistant_message})
                             st.success("Assistant has responded!")
+                            logging.debug(f"Assistant response: {assistant_message[:100]}...")
                     except Exception as e:
                         logging.error(f"Error in chat interface: {e}")
                         st.error("An error occurred while communicating with the assistant. Please try again later.")
@@ -1257,6 +1258,7 @@ def main():
             if st.button("Reset Chat"):
                 initialize_chat_interface(st.session_state['case_info'], st.session_state['document_summaries'])
                 st.success("Chat history has been reset.")
+                logging.info("Chat history has been reset.")
 
 if __name__ == '__main__':
     main()
