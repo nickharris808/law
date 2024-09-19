@@ -25,35 +25,51 @@ from pydantic import BaseModel
 
 # Configure logging
 logging.basicConfig(
-    filename='app.log',
+    filename='app_debug.log',  # Separate log file for debugging
     filemode='a',
     format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.DEBUG  # Set to DEBUG to capture all levels of logs
 )
 
+logging.debug("Application startup initiated.")
+
 # Load environment variables
 load_dotenv()
+logging.debug("Environment variables loaded.")
 
 # Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    logging.error("OPENAI_API_KEY not found in environment variables.")
+    st.error("Server configuration error: OpenAI API key is missing.")
+client = OpenAI(api_key=OPENAI_API_KEY)
+logging.debug("OpenAI client initialized.")
 
 # Initialize session state variables
 if 'step' not in st.session_state:
     st.session_state.step = 1
+    logging.debug("Session state initialized: step set to 1.")
 if 'user_data' not in st.session_state:
     st.session_state['user_data'] = {}
+    logging.debug("Session state initialized: user_data created.")
 if 'document_summaries' not in st.session_state:
     st.session_state['document_summaries'] = []
+    logging.debug("Session state initialized: document_summaries created.")
 if 'image_contexts' not in st.session_state:
     st.session_state['image_contexts'] = []
+    logging.debug("Session state initialized: image_contexts created.")
 if 'case_info' not in st.session_state:
     st.session_state['case_info'] = {}
+    logging.debug("Session state initialized: case_info created.")
 if 'report_generated' not in st.session_state:
     st.session_state['report_generated'] = False
+    logging.debug("Session state initialized: report_generated set to False.")
 if 'chat_history' not in st.session_state:
     st.session_state['chat_history'] = []
+    logging.debug("Session state initialized: chat_history created.")
 if 'uploaded_medical_bills' not in st.session_state:
     st.session_state['uploaded_medical_bills'] = None
+    logging.debug("Session state initialized: uploaded_medical_bills set to None.")
 
 # =========================
 # Helper Functions
@@ -61,7 +77,9 @@ if 'uploaded_medical_bills' not in st.session_state:
 
 def sanitize_text(text):
     """Sanitize text to prevent injection attacks."""
-    return html.escape(text)
+    sanitized = html.escape(text)
+    logging.debug(f"Sanitized text: {sanitized}")
+    return sanitized
 
 def get_location_from_zip(zip_code):
     """Fetch city and state based on ZIP code using Zippopotam.us API."""
@@ -78,16 +96,18 @@ def get_location_from_zip(zip_code):
             return location
         else:
             logging.warning(f"Failed to fetch location for ZIP code {zip_code}: Status Code {response.status_code}")
+            st.write(f"Warning: Unable to auto-populate location for ZIP code {zip_code}. Please enter manually.")
             return None
     except Exception as e:
         logging.error(f"Exception occurred while fetching location for ZIP code {zip_code}: {e}")
+        st.write("Error: An exception occurred while fetching location. Please enter manually.")
         return None
 
 def extract_text_from_document(file):
     """Extract text from uploaded documents."""
     content = ''
     try:
-        logging.debug(f"Extracting text from document: {file.name}")
+        logging.debug(f"Extracting text from document: {file.name}, Type: {file.type}")
         if file.type == 'application/pdf':
             # For PDFs
             reader = PyPDF2.PdfReader(file)
@@ -104,10 +124,11 @@ def extract_text_from_document(file):
             content = str(file.read(), 'utf-8')
             logging.debug(f"Extracted text from TXT: {file.name}")
         else:
-            # For other types, perform OCR with GPT-4
+            # For other types, perform OCR with OpenAI's GPT-4
             content = ocr_document(file)
     except Exception as e:
         logging.error(f"Error extracting text from {file.name}: {e}")
+        content = f"Error extracting text from {file.name}: {e}"
     return content
 
 def ocr_document(file):
@@ -120,10 +141,10 @@ def ocr_document(file):
         encoded_image = base64.b64encode(image_bytes).decode('utf-8')
         # Prepare system prompt
         system_prompt = "You are an OCR assistant that extracts text from images."
-
+        logging.debug("System prompt for OCR prepared.")
         # Prepare user message with base64 image
         user_message = f"Extract the text from the following image encoded in base64:\n\n{encoded_image}"
-
+        logging.debug("User message for OCR prepared.")
         # Create messages structure
         messages = [
             {
@@ -135,7 +156,6 @@ def ocr_document(file):
                 "content": user_message
             }
         ]
-
         # Make OpenAI API call
         response = client.chat.completions.create(
             model="gpt-4",  # Corrected model name
@@ -149,20 +169,20 @@ def ocr_document(file):
         logging.debug(f"OCR API response: {response}")
         # Extract text from response
         extracted_text = response['choices'][0]['message']['content']
-        logging.debug(f"Extracted text from OCR: {extracted_text[:100]}...")  # Log first 100 chars
+        logging.debug(f"Extracted text from OCR: {extracted_text[:200]}...")  # Log first 200 chars
         return extracted_text
     except Exception as e:
         logging.error(f"Error during OCR with OpenAI for {file.name}: {e}")
-        return "Error during OCR."
+        return f"Error during OCR: {e}"
 
 def summarize_text(text):
     """Summarize text using OpenAI API."""
     try:
         logging.debug("Summarizing text using OpenAI API.")
         system_prompt = "You are an AI assistant that summarizes documents."
-
+        logging.debug("System prompt for summarization prepared.")
         user_message = f"Please summarize the following text:\n\n{text}"
-
+        logging.debug("User message for summarization prepared.")
         messages = [
             {
                 "role": "system",
@@ -173,7 +193,6 @@ def summarize_text(text):
                 "content": user_message
             }
         ]
-
         response = client.chat.completions.create(
             model="gpt-4",  # Corrected model name
             messages=messages,
@@ -185,11 +204,11 @@ def summarize_text(text):
         )
         logging.debug(f"Summarization API response: {response}")
         summary = response['choices'][0]['message']['content'].strip()
-        logging.debug(f"Generated summary: {summary[:100]}...")  # Log first 100 chars
+        logging.debug(f"Generated summary: {summary[:200]}...")  # Log first 200 chars
         return summary
     except Exception as e:
         logging.error(f"Error in summarize_text: {e}")
-        return "An error occurred while summarizing the document."
+        return f"An error occurred while summarizing the document: {e}"
 
 def analyze_image(image_file, user_data):
     """Analyze image using OpenAI's GPT-4 Vision."""
@@ -201,12 +220,12 @@ def analyze_image(image_file, user_data):
         encoded_image = base64.b64encode(image_bytes).decode('utf-8')
         # Prepare system prompt
         system_prompt = "You are a legal assistant AI with expertise in analyzing images related to personal injury and malpractice cases."
-
+        logging.debug("System prompt for image analysis prepared.")
         # Prepare user message with base64 image
         user_message_text = f"""
 Analyze the following image in the context of a {user_data.get('case_type', 'personal injury')} case that occurred on {user_data.get('incident_date', 'N/A')} at {user_data.get('incident_location', 'N/A')}. Extract any details, abnormalities, or evidence that are relevant to the case, especially those that support or argue against the user's claims.
 """
-
+        logging.debug("User message for image analysis prepared.")
         messages = [
             {
                 "role": "system",
@@ -221,7 +240,6 @@ Analyze the following image in the context of a {user_data.get('case_type', 'per
                 "content": f"![Image](data:image/png;base64,{encoded_image})"
             }
         ]
-
         # Make OpenAI API call
         response = client.chat.completions.create(
             model="gpt-4",  # Corrected model name
@@ -234,15 +252,18 @@ Analyze the following image in the context of a {user_data.get('case_type', 'per
         )
         logging.debug(f"Image analysis API response: {response}")
         assistant_message = response['choices'][0]['message']['content'].strip()
-        logging.debug(f"Generated image analysis: {assistant_message[:100]}...")  # Log first 100 chars
+        logging.debug(f"Generated image analysis: {assistant_message[:200]}...")  # Log first 200 chars
         return assistant_message
     except Exception as e:
         logging.error(f"Error analyzing image {image_file.name}: {e}")
-        return f"Error analyzing image: {str(e)}"
+        return f"Error analyzing image: {e}"
 
 def process_documents(documents):
     """Process uploaded documents concurrently."""
     summaries = []
+    if not documents:
+        logging.debug("No documents to process.")
+        return summaries
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_file = {executor.submit(process_single_document, file): file for file in documents}
         for future in concurrent.futures.as_completed(future_to_file):
@@ -259,16 +280,20 @@ def process_single_document(file):
     """Process a single document: extract text and summarize."""
     logging.debug(f"Processing single document: {file.name}")
     text = extract_text_from_document(file)
-    if text:
-        summary = summarize_text(text)
+    if "Error" in text:
+        summary = text  # If extraction failed, return the error message
+        logging.warning(f"Extraction failed for {file.name}: {text}")
     else:
-        summary = "No text extracted from the document."
-    logging.debug(f"Summary for {file.name}: {summary[:100]}...")
+        summary = summarize_text(text)
+    logging.debug(f"Summary for {file.name}: {summary[:200]}...")  # Log first 200 chars
     return summary
 
 def process_images(images, user_data):
     """Process uploaded images concurrently."""
     contexts = []
+    if not images:
+        logging.debug("No images to process.")
+        return contexts
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_image = {executor.submit(analyze_image, image, user_data): image for image in images}
         for future in concurrent.futures.as_completed(future_to_image):
@@ -337,6 +362,7 @@ def legal_research(user_data, ser_api_key, ser_api_engine_id, ser_api_params={})
                     links.append(item.get('link', ''))
             else:
                 logging.warning(f"No items found for query: {query}")
+                st.write(f"Warning: No search results found for '{query}'.")
 
         # Compile findings
         compiled_summary = "\n".join(summaries)
@@ -349,6 +375,7 @@ def legal_research(user_data, ser_api_key, ser_api_engine_id, ser_api_params={})
         }
     except Exception as e:
         logging.error(f"Error during legal research: {e}")
+        st.write("Error: An exception occurred during legal research.")
         return {
             "legal_research_summary": "An error occurred during legal research.",
             "legal_research_links": ""
@@ -366,7 +393,7 @@ def extract_medical_terms(uploaded_files):
     logging.debug(f"Extracted medical terms: {terms}")
     return list(terms)
 
-def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
+def case_law_retrieval(user_data, ser_api_key, serp_api_params={}):
     """
     Retrieve relevant case law using SERP API for Google Scholar.
 
@@ -391,11 +418,11 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
         params = {
             "engine": "google_scholar",
             "q": query,
-            "api_key": serp_api_key,
+            "api_key": ser_api_key,
             "num": 5
         }
         # Update with any additional search parameters
-        params.update(ser_api_params)
+        params.update(serp_api_params)
 
         logging.debug(f"Performing SERP API search with params: {params}")
         response = requests.get("https://serpapi.com/search", params=params)
@@ -420,6 +447,11 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
         else:
             cases = []
             logging.warning("No scholar_results found in SERP API response.")
+            st.write("Warning: No case law results found.")
+            return {
+                "case_law": cases,
+                "potential_payout_estimate": 0
+            }
 
         # Analyze outcomes to estimate potential compensation ranges
         potential_payout = analyze_potential_payout(cases)
@@ -431,6 +463,7 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
         }
     except Exception as e:
         logging.error(f"Error during case law retrieval: {e}")
+        st.write("Error: An exception occurred during case law retrieval.")
         return {
             "case_law": [],
             "potential_payout_estimate": 0
@@ -448,13 +481,17 @@ def extract_case_outcome(summary):
 def extract_case_date(publication_date):
     """Extract and format the date from publication info."""
     try:
+        logging.debug(f"Extracting date from publication info: {publication_date}")
         # Attempt to parse the date in various formats
         for fmt in ("%Y-%m-%d", "%B %Y", "%Y"):
             try:
                 date_obj = datetime.strptime(publication_date, fmt)
-                return date_obj.strftime("%B %Y")
+                formatted_date = date_obj.strftime("%B %Y")
+                logging.debug(f"Parsed date: {formatted_date}")
+                return formatted_date
             except ValueError:
                 continue
+        logging.debug(f"Unable to parse date: {publication_date}")
         return publication_date
     except:
         return publication_date
@@ -476,16 +513,18 @@ def analyze_potential_payout(cases):
 
 def generate_case_info(user_data, document_summaries, image_contexts, ser_api_key, ser_api_engine_id, serp_api_params={}):
     """Generate case information using OpenAI API and additional AI agents."""
-    # Retrieve legal research data
-    logging.debug("Generating legal research data.")
-    legal_research_data = legal_research(user_data, ser_api_key, ser_api_engine_id, serp_api_params)
+    try:
+        logging.debug("Generating case information using OpenAI API.")
+        # Retrieve legal research data
+        logging.debug("Generating legal research data.")
+        legal_research_data = legal_research(user_data, ser_api_key, ser_api_engine_id, serp_api_params)
 
-    # Retrieve case law data
-    logging.debug("Generating case law data.")
-    case_law_data = case_law_retrieval(user_data, ser_api_key, serp_api_params)
+        # Retrieve case law data
+        logging.debug("Generating case law data.")
+        case_law_data = case_law_retrieval(user_data, ser_api_key, serp_api_params)
 
-    # Construct prompt for OpenAI API
-    prompt = f"""
+        # Construct prompt for OpenAI API
+        prompt = f"""
 Based on the following user data, document summaries, image analyses, legal research, and case law, provide a JSON containing:
 - 'case_summary': A comprehensive summary of the case.
 - 'best_arguments': The strongest arguments tailored to the user's case.
@@ -511,19 +550,21 @@ Case Law:
 {json.dumps(case_law_data, indent=2)}
     """
 
-    messages = [
-        {
-            "role": "system",
-            "content": "You are an AI assistant that compiles comprehensive case information based on provided data."
-        },
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ]
+        logging.debug("Prompt for case information generated.")
+        logging.debug(f"Prompt Content: {prompt[:500]}...")  # Log first 500 chars
 
-    try:
-        logging.debug("Sending case information to OpenAI API.")
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an AI assistant that compiles comprehensive case information based on provided data."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+
+        # Make OpenAI API call
         response = client.chat.completions.create(
             model="gpt-4",  # Corrected model name
             messages=messages,
@@ -533,12 +574,26 @@ Case Law:
             frequency_penalty=0,
             presence_penalty=0
         )
-        logging.debug(f"OpenAI API response: {response}")
+        logging.debug(f"OpenAI API response for case info: {response}")
         output_text = response['choices'][0]['message']['content']
+        logging.debug(f"Case info JSON received: {output_text[:500]}...")  # Log first 500 chars
         case_info = json.loads(output_text)
         logging.debug("Case information generated successfully.")
+    except json.JSONDecodeError as je:
+        logging.error(f"JSON decode error: {je}")
+        st.write("Error: Received invalid JSON from OpenAI API.")
+        case_info = {
+            "case_summary": "An error occurred while generating the case summary.",
+            "best_arguments": "",
+            "relevant_laws": "",
+            "medical_literature": "",
+            "case_law": [],
+            "potential_payout": 0,
+            "likelihood_of_winning": 0
+        }
     except Exception as e:
         logging.error(f"Error generating case info: {e}")
+        st.write("Error: An exception occurred while generating case information.")
         case_info = {
             "case_summary": "An error occurred while generating the case summary.",
             "best_arguments": "",
@@ -560,6 +615,7 @@ def add_to_mailchimp(user_data, case_info):
 
         if not all([MAILCHIMP_API_KEY, MAILCHIMP_LIST_ID, MAILCHIMP_DC]):
             logging.error("MailChimp API credentials are not fully set.")
+            st.write("Error: MailChimp configuration is incomplete.")
             return False
 
         url = f"https://{MAILCHIMP_DC}.api.mailchimp.com/3.0/lists/{MAILCHIMP_LIST_ID}/members"
@@ -582,22 +638,25 @@ def add_to_mailchimp(user_data, case_info):
             return True
         else:
             logging.error(f"MailChimp subscription failed: {response.status_code} - {response.text}")
+            st.write("Error: Failed to subscribe to the mailing list.")
             return False
     except Exception as e:
         logging.error(f"Exception during MailChimp subscription: {e}")
+        st.write("Error: An exception occurred while subscribing to the mailing list.")
         return False
 
 def generate_pdf_report(case_info, document_summaries, image_contexts):
     """Generate a PDF report using reportlab."""
     logging.debug("Generating PDF report.")
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
-    width, height = letter
-
     try:
+        c = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+
         # Title
         c.setFont("Helvetica-Bold", 20)
         c.drawCentredString(width / 2, height - 50, "Case Analysis Report")
+        logging.debug("PDF Title added.")
 
         # Case Summary
         c.setFont("Helvetica-Bold", 14)
@@ -607,6 +666,7 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
         for line in case_info.get('case_summary', '').split('\n'):
             text.textLine(line)
         c.drawText(text)
+        logging.debug("Case Summary added to PDF.")
 
         # Best Arguments
         c.setFont("Helvetica-Bold", 14)
@@ -616,6 +676,7 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
         for line in case_info.get('best_arguments', '').split('\n'):
             text.textLine(line)
         c.drawText(text)
+        logging.debug("Best Arguments added to PDF.")
 
         # Relevant Laws
         c.setFont("Helvetica-Bold", 14)
@@ -625,6 +686,7 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
         for line in case_info.get('relevant_laws', '').split('\n'):
             text.textLine(line)
         c.drawText(text)
+        logging.debug("Relevant Laws added to PDF.")
         
         # Medical Literature
         c.setFont("Helvetica-Bold", 14)
@@ -634,6 +696,7 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
         for line in case_info.get('medical_literature', '').split('\n'):
             text.textLine(line)
         c.drawText(text)
+        logging.debug("Medical Literature added to PDF.")
 
         # Case Law
         c.setFont("Helvetica-Bold", 14)
@@ -653,6 +716,7 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
             y_position -= 15
             c.drawString(70, y_position, f"Date: {case['date']}")
             y_position -= 25
+            logging.debug(f"Added case law entry to PDF: {case['case_name']}")
 
         # Document Summaries
         c.setFont("Helvetica-Bold", 14)
@@ -670,6 +734,7 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
                 c.drawString(70, y_position, line)
                 y_position -= 15
             y_position -= 10
+            logging.debug(f"Added document summary to PDF: {doc['filename']}")
 
         # Image Analyses
         c.setFont("Helvetica-Bold", 14)
@@ -687,6 +752,7 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
                 c.drawString(70, y_position, line)
                 y_position -= 15
             y_position -= 10
+            logging.debug(f"Added image analysis to PDF: {img['filename']}")
 
         # Potential Payout and Likelihood
         if y_position < 150:
@@ -699,6 +765,7 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
         c.drawString(60, y_position, f"Estimated Potential Payout: ${case_info.get('potential_payout', 0)}")
         y_position -= 20
         c.drawString(60, y_position, f"Likelihood of Winning: {case_info.get('likelihood_of_winning', 0)}%")
+        logging.debug("Potential Payout and Likelihood added to PDF.")
 
         c.save()
         buffer.seek(0)
@@ -706,6 +773,7 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
         return buffer
     except Exception as e:
         logging.error(f"Error generating PDF report: {e}")
+        st.write("Error: An exception occurred while generating the PDF report.")
         return io.BytesIO()  # Return empty buffer in case of error
 
 def generate_markdown_report(case_info, document_summaries, image_contexts):
@@ -745,6 +813,7 @@ def generate_markdown_report(case_info, document_summaries, image_contexts):
         return report_content
     except Exception as e:
         logging.error(f"Error generating Markdown report: {e}")
+        st.write("Error: An exception occurred while generating the Markdown report.")
         return "# Case Analysis Report\n\nAn error occurred while generating the report."
 
 def initialize_chat_interface(case_info, document_summaries):
@@ -780,7 +849,7 @@ Use this information to answer the user's questions accurately and helpfully.
                 'content': system_prompt
             }
         ]
-        logging.debug("Chat interface initialized.")
+        logging.debug("Chat interface initialized with system prompt.")
     except Exception as e:
         logging.error(f"Error initializing chat interface: {e}")
 
@@ -789,11 +858,13 @@ Use this information to answer the user's questions accurately and helpfully.
 # =========================
 
 def main():
+    logging.debug("Starting main application.")
     st.set_page_config(page_title="Legal Assistant", layout="wide")
     st.title("Legal Assistant for Personal Injury/Malpractice Cases")
 
     # Display progress bar
     progress = st.progress((st.session_state.step - 1) / 5)
+    logging.debug(f"Current step: {st.session_state.step}")
 
     # Step 1: Personal Information
     if st.session_state.step == 1:
@@ -913,13 +984,15 @@ def main():
             if uploaded_medical_bills:
                 st.session_state['uploaded_medical_bills'] = uploaded_medical_bills
                 st.success("Medical bills uploaded successfully!")
+                logging.debug(f"Uploaded medical bills: {uploaded_medical_bills.name}")
             else:
                 medical_bills_notes = st.text_area(
                     "If you do not have medical bills to upload, please provide estimated amounts or notes:",
                     value=st.session_state['user_data'].get('medical_bills_notes', ''),
                     help="Provide an estimated range or any notes regarding your medical bills."
                 )
-            
+                logging.debug("No medical bills uploaded; user provided notes.")
+
             medical_treatment = st.text_area(
                 "Medical Treatment Received",
                 value=st.session_state['user_data'].get('medical_treatment', ''),
@@ -1038,6 +1111,7 @@ def main():
             if st.button("Previous"):
                 st.session_state.step = 2
                 logging.debug("Navigated back to Step 2.")
+                # Force rerun to reflect state change immediately
                 st.experimental_rerun()
 
     # Step 4: Consent
@@ -1094,6 +1168,8 @@ def main():
                         image_contexts = process_images(st.session_state.get('uploaded_images', []), st.session_state['user_data'])
                         st.session_state['document_summaries'] = document_summaries
                         st.session_state['image_contexts'] = image_contexts
+                        logging.debug(f"Document summaries: {document_summaries}")
+                        logging.debug(f"Image contexts: {image_contexts}")
 
                         # Retrieve SERP API credentials
                         serp_api_key = os.getenv("SERP_API_KEY")
@@ -1115,12 +1191,14 @@ def main():
                             serp_api_params
                         )
                         st.session_state['case_info'] = case_info
+                        logging.debug(f"Generated case info: {case_info}")
 
                         # MailChimp integration
                         if st.session_state['user_data'].get('opt_in_contact', False):
                             success = add_to_mailchimp(st.session_state['user_data'], case_info)
                             if success:
                                 st.success("You have been subscribed to our mailing list.")
+                                logging.info("User subscribed to MailChimp.")
                             else:
                                 st.error("There was an error subscribing you to our mailing list.")
                                 logging.error("MailChimp subscription failed.")
@@ -1131,14 +1209,16 @@ def main():
                         # Generate PDF report
                         pdf_buffer = generate_pdf_report(case_info, document_summaries, image_contexts)
                         st.session_state['pdf_report'] = pdf_buffer
+                        logging.debug("PDF report generated and stored in session state.")
 
                         # Generate Markdown report if needed
                         markdown_report = generate_markdown_report(case_info, document_summaries, image_contexts)
                         st.session_state['markdown_report'] = markdown_report
+                        logging.debug("Markdown report generated and stored in session state.")
 
                         st.session_state['report_generated'] = True
                         st.success("Your AI report has been generated!")
-                        logging.info("AI report generated successfully.")
+                        logging.info("AI report generation completed successfully.")
                     except Exception as e:
                         logging.error(f"Error during report generation: {e}")
                         st.error("An error occurred while generating your report. Please try again later.")
@@ -1157,15 +1237,19 @@ def main():
 
             st.subheader("Case Overview")
             st.write(st.session_state['case_info'].get('case_summary', ''))
+            logging.debug("Displayed Case Overview.")
 
             st.subheader("Best Arguments")
             st.write(st.session_state['case_info'].get('best_arguments', ''))
+            logging.debug("Displayed Best Arguments.")
 
             st.subheader("Relevant Laws")
             st.write(st.session_state['case_info'].get('relevant_laws', ''))
+            logging.debug("Displayed Relevant Laws.")
             
             st.subheader("Medical Literature")
             st.write(st.session_state['case_info'].get('medical_literature', ''))
+            logging.debug("Displayed Medical Literature.")
 
             st.subheader("Case Law")
             for case in st.session_state['case_info'].get('case_law', []):
@@ -1173,20 +1257,24 @@ def main():
                 st.write(f"**Summary:** {case['summary']}")
                 st.write(f"**Outcome:** {case['outcome']}")
                 st.write(f"**Date:** {case['date']}\n")
+                logging.debug(f"Displayed case law: {case['case_name']}")
 
             st.subheader("Document Summaries")
             for doc_summary in st.session_state['document_summaries']:
                 st.write(f"**{doc_summary['filename']}**")
                 st.write(doc_summary['summary'])
+                logging.debug(f"Displayed document summary: {doc_summary['filename']}")
 
             st.subheader("Image Analyses")
             for image_context in st.session_state['image_contexts']:
                 st.write(f"**{image_context['filename']}**")
                 st.write(image_context['context'])
+                logging.debug(f"Displayed image analysis: {image_context['filename']}")
 
             st.subheader("Potential Payout and Likelihood")
             st.write(f"**Estimated Potential Payout:** ${st.session_state['case_info'].get('potential_payout', 0)}")
             st.write(f"**Likelihood of Winning:** {st.session_state['case_info'].get('likelihood_of_winning', 0)}%")
+            logging.debug("Displayed Potential Payout and Likelihood.")
 
             # Downloadable PDF report
             if 'pdf_report' in st.session_state:
@@ -1196,6 +1284,7 @@ def main():
                     file_name="Case_Analysis_Report.pdf",
                     mime="application/pdf"
                 )
+                logging.debug("PDF download button displayed.")
 
             # Downloadable Markdown report (optional)
             if 'markdown_report' in st.session_state:
@@ -1205,6 +1294,7 @@ def main():
                     file_name="Case_Analysis_Report.md",
                     mime="text/markdown"
                 )
+                logging.debug("Markdown download button displayed.")
 
             # Chat Interface
             st.header("Chat with Your Case")
@@ -1224,10 +1314,10 @@ def main():
                 submitted = st.form_submit_button("Send")
                 
                 if submitted and user_input:
-                    logging.debug("Chat form submitted.")
+                    logging.debug(f"Chat form submitted with user input: {user_input}")
                     # Append user message
                     st.session_state['chat_history'].append({'role': 'user', 'content': user_input})
-                    logging.debug(f"User input: {user_input}")
+                    logging.debug("User message appended to chat history.")
 
                     # Prepare messages for OpenAI API
                     messages = st.session_state['chat_history']
@@ -1249,7 +1339,7 @@ def main():
                             assistant_message = response['choices'][0]['message']['content'].strip()
                             st.session_state['chat_history'].append({'role': 'assistant', 'content': assistant_message})
                             st.success("Assistant has responded!")
-                            logging.debug(f"Assistant response: {assistant_message[:100]}...")
+                            logging.debug(f"Assistant response appended: {assistant_message[:200]}...")
                     except Exception as e:
                         logging.error(f"Error in chat interface: {e}")
                         st.error("An error occurred while communicating with the assistant. Please try again later.")
