@@ -1,5 +1,6 @@
 # app.py
-
+import mailchimp_marketing as MailchimpMarketing
+from mailchimp_marketing.api_client import ApiClientError
 import streamlit as st
 from openai import OpenAI
 import os
@@ -487,10 +488,15 @@ def add_to_mailchimp(user_data, case_info):
             st.error("❌ **MailChimp configuration is incomplete.**")
             return False
 
-        url = f"https://{MAILCHIMP_DC}.api.mailchimp.com/3.0/lists/{MAILCHIMP_LIST_ID}/members"
+        client = MailchimpMarketing.Client()
+        client.set_config({
+            "api_key": MAILCHIMP_API_KEY,
+            "server": MAILCHIMP_DC  # The server prefix is usually 'usX' (e.g., us19).
+        })
+
         data = {
             "email_address": user_data.get('email', ''),
-            "status": "subscribed",
+            "status": "subscribed",  # You can change this to 'pending' if you want confirmation emails.
             "merge_fields": {
                 "FNAME": user_data.get('first_name', ''),
                 "LNAME": user_data.get('last_name', ''),
@@ -498,15 +504,13 @@ def add_to_mailchimp(user_data, case_info):
                 "LIKELIHOOD": str(case_info.get('likelihood_of_winning', ''))
             }
         }
-        auth = ('anystring', MAILCHIMP_API_KEY)
-        response = requests.post(url, auth=auth, json=data)
-        if response.status_code in [200, 201]:
-            return True
-        else:
-            st.error("❌ **Failed to subscribe to the mailing list.**")
-            return False
-    except Exception as e:
-        st.error("❌ **An exception occurred while subscribing to the mailing list.**")
+
+        response = client.lists.add_list_member(MAILCHIMP_LIST_ID, data)
+        st.success("✅ **Successfully subscribed to the mailing list.**")
+        return True
+
+    except ApiClientError as error:
+        st.error(f"❌ **Failed to subscribe to the mailing list. Error: {error.text}**")
         return False
 
 def generate_pdf_report(case_info, document_summaries, image_contexts):
