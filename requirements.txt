@@ -7,3 +7,4 @@ pillow
 requests
 reportlab
 google-search-results
+mailchimp-marketing
