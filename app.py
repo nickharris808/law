@@ -123,7 +123,7 @@ def summarize_text(text):
     prompt = f"Summarize the following text:\n\n{text}"
     try:
         response = openai.Completion.create(
-            engine='gpt-4',  # Using the latest model
+            engine='gpt-40-mini',  # Using the latest model
             prompt=prompt,
             max_tokens=500,
             temperature=0.5,
@@ -139,7 +139,7 @@ def summarize_text(text):
         return "An error occurred while summarizing the document."
 
 def analyze_image(image_file, user_data):
-    """Analyze image using GPT-4 Vision."""
+    """Analyze image using gpt-40-mini Vision."""
     image_url = upload_image_and_get_url(image_file)
 
     if not image_url:
@@ -162,7 +162,7 @@ def analyze_image(image_file, user_data):
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-40-mini",
             messages=messages,
             temperature=0.45,
             max_tokens=1500,
@@ -239,7 +239,7 @@ def generate_case_info(user_data, document_summaries, image_contexts):
     """
     try:
         response = openai.Completion.create(
-            engine='gpt-4',
+            engine='gpt-40-mini',
             prompt=prompt,
             max_tokens=1500,
             temperature=0.5,
@@ -683,7 +683,7 @@ def main():
                 try:
                     with st.spinner("Generating response..."):
                         response = openai.ChatCompletion.create(
-                            model="gpt-4",
+                            model="gpt-40-mini",
                             messages=messages,
                             temperature=0.45,
                             max_tokens=500,
