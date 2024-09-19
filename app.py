@@ -856,7 +856,6 @@ def main():
                     })
                     st.session_state.step = 2
                     st.success("Personal information saved successfully!")
-                    st.experimental_rerun()  # Force rerun to reflect state change immediately
 
     # Step 2: Case Details
     elif st.session_state.step == 2:
@@ -1023,7 +1022,6 @@ def main():
                     st.session_state['user_data'].update(user_data_update)
                     st.session_state.step = 3
                     st.success("Case details saved successfully!")
-                    st.experimental_rerun()  # Force rerun to reflect state change immediately
 
     # Step 3: Uploads
     elif st.session_state.step == 3:
@@ -1051,14 +1049,12 @@ def main():
                     st.session_state['uploaded_images'] = uploaded_images
                     st.session_state.step = 4
                     st.success("Files uploaded successfully!")
-                    st.experimental_rerun()  # Force rerun to reflect state change immediately
 
         # Navigation Buttons
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Previous"):
                 st.session_state.step = 2
-                st.experimental_rerun()
 
     # Step 4: Consent
     elif st.session_state.step == 4:
@@ -1086,14 +1082,12 @@ def main():
                     })
                     st.session_state.step = 5
                     st.success("Consent information saved successfully!")
-                    st.experimental_rerun()  # Force rerun to reflect state change immediately
 
         # Navigation Buttons
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Previous"):
                 st.session_state.step = 3
-                st.experimental_rerun()
 
     # Step 5: Review and Submit
     elif st.session_state.step == 5:
@@ -1157,7 +1151,6 @@ def main():
         with col1:
             if st.button("Previous"):
                 st.session_state.step = 4
-                st.experimental_rerun()
 
         # Display results page
         if st.session_state['report_generated']:
