@@ -6,3 +6,4 @@ docx2txt
 pillow
 requests
 reportlab
+google-search-results
