@@ -32,16 +32,20 @@ def get_location_from_zip(zip_code):
     """Fetch city and state based on ZIP code using Zippopotam.us API."""
     try:
         response = requests.get(f"http://api.zippopotam.us/us/{zip_code}")  # Adjust country code as needed
+        add_debug_message(f"📡 **Zippopotam.us API Request:** http://api.zippopotam.us/us/{zip_code}")
         if response.status_code == 200:
             data = response.json()
+            add_debug_message(f"✅ **Zippopotam.us API Response:** {json.dumps(data)}")
             location = {
                 'city': data['places'][0]['place name'],
                 'state': data['places'][0]['state abbreviation']
             }
             return location
         else:
+            add_debug_message(f"❌ **Zippopotam.us API Error:** Status Code {response.status_code}")
             return None
     except Exception as e:
+        add_debug_message(f"❌ **Zippopotam.us API Exception:** {e}")
         return None
 
 def extract_text_from_document(file):
@@ -51,30 +55,37 @@ def extract_text_from_document(file):
         if file.type == 'application/pdf':
             # For PDFs
             reader = PyPDF2.PdfReader(file)
+            add_debug_message(f"📄 **Extracting text from PDF:** {file.name}")
             for page_num, page in enumerate(reader.pages, start=1):
                 text = page.extract_text()
                 if text:
                     content += text
         elif file.type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
             # For DOCX
+            add_debug_message(f"📄 **Extracting text from DOCX:** {file.name}")
             content = docx2txt.process(file)
         elif file.type == 'text/plain':
+            add_debug_message(f"📄 **Extracting text from TXT:** {file.name}")
             content = str(file.read(), 'utf-8')
         else:
-            # For other types, perform OCR with OpenAI's GPT-4
+            # For other types, perform OCR with OpenAI's gpt-40-mini
+            add_debug_message(f"🖼️ **Performing OCR on:** {file.name}")
             content = ocr_document(file)
     except Exception as e:
         content = f"Error extracting text from {file.name}: {e}"
+        add_debug_message(f"❌ **Text Extraction Error for {file.name}:** {e}")
     truncated_content = content[:200] + "..." if len(content) > 200 else content
+    add_debug_message(f"📝 **Extracted Content (truncated):** {truncated_content}")
     return content
 
 def ocr_document(file):
-    """Perform OCR on documents using OpenAI's GPT-4."""
+    """Perform OCR on documents using OpenAI's gpt-40-mini."""
     try:
         # Read the image file as bytes
         image_bytes = file.read()
         # Encode image to base64
         encoded_image = base64.b64encode(image_bytes).decode('utf-8')
+        add_debug_message(f"🔄 **Encoded Image to Base64:** {file.name}")
         # Prepare system prompt
         system_prompt = "You are an OCR assistant that extracts text from images."
         # Prepare user message with base64 image
@@ -91,8 +102,9 @@ def ocr_document(file):
             }
         ]
         # Make OpenAI API call
+        add_debug_message(f"🤖 **OpenAI OCR API Request Messages:** {json.dumps(messages)}")
         response = client.chat.completions.create(
-            model="gpt-4",  # Corrected model name
+            model="gpt-40-mini",  # Corrected model name
             messages=messages,
             temperature=0.0,
             max_tokens=1000,
@@ -100,11 +112,14 @@ def ocr_document(file):
             frequency_penalty=0,
             presence_penalty=0
         )
+        add_debug_message(f"🤖 **OpenAI OCR API Response:** {json.dumps(response)}")
         # Extract text from response
         extracted_text = response['choices'][0]['message']['content']
         return extracted_text
     except Exception as e:
-        return f"Error during OCR: {e}"
+        error_message = f"Error during OCR: {e}"
+        add_debug_message(f"❌ **OCR Error:** {error_message}")
+        return error_message
 
 def summarize_text(text):
     """Summarize text using OpenAI API."""
@@ -121,8 +136,9 @@ def summarize_text(text):
                 "content": user_message
             }
         ]
+        add_debug_message(f"🤖 **OpenAI Summarize API Request Messages:** {json.dumps(messages)}")
         response = client.chat.completions.create(
-            model="gpt-4",  # Corrected model name
+            model="gpt-40-mini",  # Corrected model name
             messages=messages,
             temperature=0.5,
             max_tokens=500,
@@ -130,23 +146,28 @@ def summarize_text(text):
             frequency_penalty=0,
             presence_penalty=0
         )
+        add_debug_message(f"🤖 **OpenAI Summarize API Response:** {json.dumps(response)}")
         summary = response['choices'][0]['message']['content'].strip()
+        add_debug_message(f"📝 **Generated Summary:** {summary}")
         return summary
     except Exception as e:
-        return f"An error occurred while summarizing the document: {e}"
+        error_message = f"An error occurred while summarizing the document: {e}"
+        add_debug_message(f"❌ **Summarize Text Error:** {error_message}")
+        return error_message
 
 def analyze_image(image_file, user_data):
-    """Analyze image using OpenAI's GPT-4 Vision."""
+    """Analyze image using OpenAI's gpt-40-mini Vision."""
     try:
         # Read the image file as bytes
         image_bytes = image_file.read()
         # Encode image to base64
         encoded_image = base64.b64encode(image_bytes).decode('utf-8')
+        add_debug_message(f"🔄 **Encoded Image to Base64 for Analysis:** {image_file.name}")
         # Prepare system prompt
         system_prompt = "You are a legal assistant AI with expertise in analyzing images related to personal injury and malpractice cases."
         # Prepare user message with base64 image
         user_message_text = f"""
-Analyze the following image in the context of a {user_data.get('case_type', 'personal injury')} case that occurred on {user_data.get('incident_date', 'N/A')} at {user_data.get('incident_location', 'N/A')}. Extract any details, abnormalities, or evidence that are relevant to the case, especially those that support or argue against the user's claims.
+Analyze the following image in the context of a {user_data.get('case_type', 'personal injury')} case that occurred on {user_data.get('incident_date', 'N/A')} at ZIP Code {user_data.get('zip_code', 'N/A')}. Extract any details, abnormalities, or evidence that are relevant to the case, especially those that support or argue against the user's claims.
 """
         messages = [
             {
@@ -162,9 +183,10 @@ Analyze the following image in the context of a {user_data.get('case_type', 'per
                 "content": f"![Image](data:image/png;base64,{encoded_image})"
             }
         ]
+        add_debug_message(f"🤖 **OpenAI Image Analysis API Request Messages:** {json.dumps(messages)}")
         # Make OpenAI API call
         response = client.chat.completions.create(
-            model="gpt-4",  # Corrected model name
+            model="gpt-40-mini",  # Corrected model name
             messages=messages,
             temperature=0.45,
             max_tokens=1500,
@@ -172,15 +194,20 @@ Analyze the following image in the context of a {user_data.get('case_type', 'per
             frequency_penalty=0,
             presence_penalty=0
         )
+        add_debug_message(f"🤖 **OpenAI Image Analysis API Response:** {json.dumps(response)}")
         assistant_message = response['choices'][0]['message']['content'].strip()
+        add_debug_message(f"📝 **Image Analysis Result:** {assistant_message}")
         return assistant_message
     except Exception as e:
-        return f"Error analyzing image: {e}"
+        error_message = f"Error analyzing image: {e}"
+        add_debug_message(f"❌ **Image Analysis Error:** {error_message}")
+        return error_message
 
 def process_documents(documents):
     """Process uploaded documents concurrently."""
     summaries = []
     if not documents:
+        add_debug_message("📂 **No Documents Uploaded to Process**")
         return summaries
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_file = {executor.submit(process_single_document, file): file for file in documents}
@@ -189,15 +216,20 @@ def process_documents(documents):
             try:
                 summary = future.result()
                 summaries.append({'filename': file.name, 'summary': summary})
+                add_debug_message(f"✅ **Processed Document:** {file.name}")
             except Exception as e:
+                error_message = f"Error processing {file.name}: {e}"
                 summaries.append({'filename': file.name, 'summary': f"Error: {e}"})
+                add_debug_message(f"❌ **Document Processing Error for {file.name}:** {e}")
     return summaries
 
 def process_single_document(file):
     """Process a single document: extract text and summarize."""
+    add_debug_message(f"📄 **Processing Single Document:** {file.name}")
     text = extract_text_from_document(file)
     if "Error" in text:
         summary = text  # If extraction failed, return the error message
+        add_debug_message(f"❌ **Text Extraction Failed for {file.name}**")
     else:
         summary = summarize_text(text)
     return summary
@@ -206,6 +238,7 @@ def process_images(images, user_data):
     """Process uploaded images concurrently."""
     contexts = []
     if not images:
+        add_debug_message("🖼️ **No Images Uploaded to Process**")
         return contexts
     with concurrent.futures.ThreadPoolExecutor() as executor:
         future_to_image = {executor.submit(analyze_image, image, user_data): image for image in images}
@@ -214,8 +247,10 @@ def process_images(images, user_data):
             try:
                 context = future.result()
                 contexts.append({'filename': image.name, 'context': context})
+                add_debug_message(f"✅ **Processed Image:** {image.name}")
             except Exception as e:
                 contexts.append({'filename': image.name, 'context': "Error processing image."})
+                add_debug_message(f"❌ **Image Processing Error for {image.name}:** {e}")
     return contexts
 
 def legal_research(user_data, serp_api_key, serp_api_params={}):
@@ -232,16 +267,16 @@ def legal_research(user_data, serp_api_key, serp_api_params={}):
     """
     try:
         case_type = user_data.get('case_type', 'personal injury')
-        location = user_data.get('incident_location', '')
+        zip_code = user_data.get('zip_code', '')
 
         # Extract medical terms from medical bills if available
         medical_terms = extract_medical_terms(st.session_state.get('uploaded_medical_bills', []))
 
         # Construct search queries
         search_queries = [
-            f"{case_type} laws in {location}",
-            f"Relevant statutes for {case_type} cases in {location}",
-            f"{' '.join(medical_terms)} treatments in {location}"
+            f"{case_type} laws in ZIP Code {zip_code}",
+            f"Relevant statutes for {case_type} cases in ZIP Code {zip_code}",
+            f"{' '.join(medical_terms)} treatments in ZIP Code {zip_code}"
         ]
 
         summaries = []
@@ -258,8 +293,10 @@ def legal_research(user_data, serp_api_key, serp_api_params={}):
             # Update with any additional search parameters
             params.update(serp_api_params)
 
+            add_debug_message(f"🔍 **SERP API Request Params:** {json.dumps(params)}")
             search = GoogleSearch(params)
             results = search.get_dict()
+            add_debug_message(f"🔍 **SERP API Response:** {json.dumps(results)}")
 
             if 'scholar_results' in results:
                 for item in results['scholar_results']:
@@ -273,11 +310,13 @@ def legal_research(user_data, serp_api_key, serp_api_params={}):
         compiled_summary = "\n".join(summaries)
         compiled_links = "\n".join(links)
 
+        add_debug_message("📑 **Compiled Legal Research Summary and Links**")
         return {
             "legal_research_summary": compiled_summary,
             "legal_research_links": compiled_links
         }
     except Exception as e:
+        add_debug_message(f"❌ **Legal Research Error:** {e}")
         return {
             "legal_research_summary": "An error occurred during legal research.",
             "legal_research_links": ""
@@ -291,6 +330,7 @@ def extract_medical_terms(uploaded_files):
         # Simple example: extract capitalized terms (could be enhanced with NLP)
         extracted = [word for word in text.split() if word.istitle()]
         terms.update(extracted)
+    add_debug_message(f"🩺 **Extracted Medical Terms:** {list(terms)}")
     return list(terms)
 
 def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
@@ -307,10 +347,10 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
     """
     try:
         case_type = user_data.get('case_type', 'personal injury')
-        location = user_data.get('incident_location', '')
+        zip_code = user_data.get('zip_code', '')
 
         # Construct search query
-        query = f"case precedents for {case_type} in {location}"
+        query = f"case precedents for {case_type} in ZIP Code {zip_code}"
 
         # Base SERP API parameters
         params = {
@@ -323,8 +363,10 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
         # Update with any additional search parameters
         params.update(serp_api_params)
 
+        add_debug_message(f"🔍 **SERP API Case Law Request Params:** {json.dumps(params)}")
         search = GoogleSearch(params)
         results = search.get_dict()
+        add_debug_message(f"🔍 **SERP API Case Law Response:** {json.dumps(results)}")
 
         if 'scholar_results' in results:
             results_list = results['scholar_results']
@@ -341,6 +383,7 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
                     "date": date
                 })
         else:
+            add_debug_message("❌ **No Scholar Results Found for Case Law Retrieval**")
             return {
                 "case_law": [],
                 "potential_payout_estimate": 0
@@ -349,11 +392,13 @@ def case_law_retrieval(user_data, serp_api_key, serp_api_params={}):
         # Analyze outcomes to estimate potential compensation ranges
         potential_payout = analyze_potential_payout(cases)
 
+        add_debug_message(f"💰 **Potential Payout Estimate:** {potential_payout}")
         return {
             "case_law": cases,
             "potential_payout_estimate": potential_payout
         }
     except Exception as e:
+        add_debug_message(f"❌ **Case Law Retrieval Error:** {e}")
         return {
             "case_law": [],
             "potential_payout_estimate": 0
@@ -392,13 +437,16 @@ def analyze_potential_payout(cases):
             payouts.append(50000)  # Example value
     if payouts:
         average_payout = sum(payouts) / len(payouts)
+        add_debug_message(f"💵 **Calculated Average Payout:** {average_payout}")
         return average_payout
     else:
+        add_debug_message("💵 **No Successful Cases Found for Payout Calculation**")
         return 0
 
 def generate_case_info(user_data, document_summaries, image_contexts, serp_api_key, serp_api_params={}):
     """Generate case information using OpenAI API and additional AI agents."""
     try:
+        add_debug_message("📝 **Starting Case Info Generation with OpenAI**")
         # Retrieve legal research data
         legal_research_data = legal_research(user_data, serp_api_key, serp_api_params)
 
@@ -443,9 +491,10 @@ Case Law:
             }
         ]
 
+        add_debug_message(f"🤖 **OpenAI Case Info API Request Messages:** {json.dumps(messages)}")
         # Make OpenAI API call
         response = client.chat.completions.create(
-            model="gpt-4",  # Corrected model name
+            model="gpt-40-mini",  # Corrected model name
             messages=messages,
             temperature=0.5,
             max_tokens=16383,
@@ -453,9 +502,12 @@ Case Law:
             frequency_penalty=0,
             presence_penalty=0
         )
+        add_debug_message(f"🤖 **OpenAI Case Info API Response:** {json.dumps(response)}")
         output_text = response['choices'][0]['message']['content']
         case_info = json.loads(output_text)
+        add_debug_message("✅ **Case Info Generated Successfully**")
     except json.JSONDecodeError as je:
+        add_debug_message(f"❌ **JSON Decode Error in Case Info Generation:** {je}")
         case_info = {
             "case_summary": "An error occurred while generating the case summary.",
             "best_arguments": "",
@@ -466,6 +518,7 @@ Case Law:
             "likelihood_of_winning": 0
         }
     except Exception as e:
+        add_debug_message(f"❌ **Case Info Generation Error:** {e}")
         case_info = {
             "case_summary": "An error occurred while generating the case summary.",
             "best_arguments": "",
@@ -485,11 +538,13 @@ def add_to_mailchimp(user_data, case_info):
         MAILCHIMP_DC = os.getenv("MAILCHIMP_DC")
 
         if not all([MAILCHIMP_API_KEY, MAILCHIMP_LIST_ID, MAILCHIMP_DC]):
-            st.error("❌ **MailChimp configuration is incomplete.**")
+            error_msg = "MailChimp configuration is incomplete."
+            st.error(f"❌ **{error_msg}**")
+            add_debug_message(f"❌ **MailChimp Configuration Missing:** {MAILCHIMP_API_KEY}, {MAILCHIMP_LIST_ID}, {MAILCHIMP_DC}")
             return False
 
-        client = MailchimpMarketing.Client()
-        client.set_config({
+        client_mailchimp = MailchimpMarketing.Client()
+        client_mailchimp.set_config({
             "api_key": MAILCHIMP_API_KEY,
             "server": MAILCHIMP_DC  # The server prefix is usually 'usX' (e.g., us19).
         })
@@ -505,18 +560,27 @@ def add_to_mailchimp(user_data, case_info):
             }
         }
 
-        response = client.lists.add_list_member(MAILCHIMP_LIST_ID, data)
+        add_debug_message(f"📧 **MailChimp API Request Data:** {json.dumps(data)}")
+        response = client_mailchimp.lists.add_list_member(MAILCHIMP_LIST_ID, data)
+        add_debug_message(f"📧 **MailChimp API Response:** {json.dumps(response)}")
         st.success("✅ **Successfully subscribed to the mailing list.**")
         return True
 
     except ApiClientError as error:
-        st.error(f"❌ **Failed to subscribe to the mailing list. Error: {error.text}**")
+        error_text = error.text
+        st.error(f"❌ **Failed to subscribe to the mailing list. Error: {error_text}**")
+        add_debug_message(f"❌ **MailChimp API Client Error:** {error_text}")
+        return False
+    except Exception as e:
+        add_debug_message(f"❌ **MailChimp API Exception:** {e}")
+        st.error(f"❌ **An unexpected error occurred with MailChimp:** {e}")
         return False
 
 def generate_pdf_report(case_info, document_summaries, image_contexts):
     """Generate a PDF report using reportlab."""
     buffer = io.BytesIO()
     try:
+        add_debug_message("📄 **Generating PDF Report**")
         c = canvas.Canvas(buffer, pagesize=letter)
         width, height = letter
 
@@ -627,13 +691,16 @@ def generate_pdf_report(case_info, document_summaries, image_contexts):
 
         c.save()
         buffer.seek(0)
+        add_debug_message("📄 **PDF Report Generated Successfully**")
         return buffer
     except Exception as e:
+        add_debug_message(f"❌ **PDF Generation Error:** {e}")
         return io.BytesIO()  # Return empty buffer in case of error
 
 def generate_markdown_report(case_info, document_summaries, image_contexts):
     """Generate a markdown report."""
     try:
+        add_debug_message("📝 **Generating Markdown Report**")
         report_content = f"# Case Analysis Report\n\n"
 
         report_content += f"## Case Summary\n{sanitize_text(case_info.get('case_summary', ''))}\n\n"
@@ -663,13 +730,16 @@ def generate_markdown_report(case_info, document_summaries, image_contexts):
         report_content += f"**Estimated Potential Payout:** ${case_info.get('potential_payout', 0)}\n\n"
         report_content += f"**Likelihood of Winning:** {case_info.get('likelihood_of_winning', 0)}%\n\n"
 
+        add_debug_message("📝 **Markdown Report Generated Successfully**")
         return report_content
     except Exception as e:
+        add_debug_message(f"❌ **Markdown Report Generation Error:** {e}")
         return "# Case Analysis Report\n\nAn error occurred while generating the report."
 
 def initialize_chat_interface(case_info, document_summaries):
     """Initialize the chat interface with system prompt."""
     try:
+        add_debug_message("💬 **Initializing Chat Interface**")
         system_prompt = f"""
 You are a legal assistant AI that has analyzed the following case information, documents, legal research, and case law:
 
@@ -699,8 +769,9 @@ Use this information to answer the user's questions accurately and helpfully.
                 'content': system_prompt
             }
         ]
+        add_debug_message("💬 **Chat Interface Initialized**")
     except Exception as e:
-        pass  # Handle initialization errors if necessary
+        add_debug_message(f"❌ **Chat Interface Initialization Error:** {e}")
 
 # =========================
 # Main Application
@@ -731,7 +802,7 @@ def main():
     # Initialize OpenAI client
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     if not OPENAI_API_KEY:
-        add_debug_message("❌ **Error:** OpenAI API key is missing. Please set `OPENAI_API_KEY` in your environment variables.")
+        add_debug_message("❌ **Error:** OpenAI API key is missing. Please set OPENAI_API_KEY in your environment variables.")
         st.stop()
     try:
         client = OpenAI(api_key=OPENAI_API_KEY)
@@ -773,7 +844,7 @@ def main():
     st.title("⚖️ **Legal Assistant for Personal Injury/Malpractice Cases**")
 
     # Display progress bar
-    total_steps = 5
+    total_steps = 4  # Updated total steps after removing step 5
     progress = st.progress((st.session_state.step - 1) / total_steps)
     st.write(f"📈 **Current Step:** {st.session_state.step}/{total_steps}")
     
@@ -784,7 +855,7 @@ def main():
             first_name = st.text_input("First Name *", value=st.session_state['user_data'].get('first_name', ''))
             last_name = st.text_input("Last Name *", value=st.session_state['user_data'].get('last_name', ''))
             email = st.text_input("Email Address *", value=st.session_state['user_data'].get('email', ''))
-            phone = st.text_input("Phone Number *", value=st.session_state['user_data'].get('phone', ''))
+            phone = st.text_input("Phone Number", value=st.session_state['user_data'].get('phone', ''))
             submitted = st.form_submit_button("Next")
             
             if submitted:
@@ -796,8 +867,6 @@ def main():
                     errors.append("❌ Last name is required.")
                 if not email or "@" not in email:
                     errors.append("❌ A valid email address is required.")
-                if not phone:
-                    errors.append("❌ Phone number is required.")
                 
                 if errors:
                     for error in errors:
@@ -837,27 +906,9 @@ def main():
                 value=st.session_state['user_data'].get('zip_code', ''),
                 help="Enter your ZIP or Postal Code."
             )
-            # Auto-Populate City and State based on ZIP code
-            if zip_code:
-                location = get_location_from_zip(zip_code)
-                if location:
-                    incident_city = location.get('city', '')
-                    incident_state = location.get('state', '')
-                    st.session_state['user_data']['incident_city'] = incident_city
-                    st.session_state['user_data']['incident_state'] = incident_state
-                    st.session_state['user_data']['incident_location'] = f"{incident_city}, {incident_state}, {st.session_state['user_data'].get('incident_country', '')}"
-                    st.success(f"📍 **Location Auto-Filled:** {incident_city}, {incident_state}")
-                    # Display auto-filled City and State as disabled inputs
-                    st.text_input("City *", value=incident_city, disabled=True)
-                    st.text_input("State/Province *", value=incident_state, disabled=True)
-                else:
-                    # Allow manual entry if auto-population fails
-                    incident_city = st.text_input("City *", value=st.session_state['user_data'].get('incident_city', ''))
-                    incident_state = st.text_input("State/Province *", value=st.session_state['user_data'].get('incident_state', ''))
-            else:
-                incident_city = st.text_input("City *", value=st.session_state['user_data'].get('incident_city', ''))
-                incident_state = st.text_input("State/Province *", value=st.session_state['user_data'].get('incident_state', ''))
-            incident_country = st.text_input("Country *", value=st.session_state['user_data'].get('incident_country', ''))
+            # Remove location auto-population and additional location fields
+            st.text_input("ZIP Code Entered:", value=zip_code, disabled=True)
+
             incident_description = st.text_area(
                 "Description of Incident *",
                 value=st.session_state['user_data'].get('incident_description', ''),
@@ -884,25 +935,7 @@ def main():
             else:
                 other_damages = st.text_input("Please specify other damages:", disabled=True)
             
-            # Unified Medical Bills Section
-            st.subheader("💉 Medical Bills")
-            uploaded_medical_bills = st.file_uploader(
-                "Upload Medical Bills (PDF, JPG, PNG) *",
-                type=['pdf', 'jpg', 'png'],
-                accept_multiple_files=False,
-                help="Upload your medical bills. If you do not have the documents, please provide estimated amounts below."
-            )
-            if uploaded_medical_bills:
-                st.session_state['uploaded_medical_bills'] = uploaded_medical_bills
-                st.success("✅ **Medical bills uploaded successfully!**")
-                add_debug_message(f"📁 **Uploaded Medical Bills:** {uploaded_medical_bills.name}")
-            else:
-                medical_bills_notes = st.text_area(
-                    "If you do not have medical bills to upload, please provide estimated amounts or notes:",
-                    value=st.session_state['user_data'].get('medical_bills_notes', ''),
-                    help="Provide an estimated range or any notes regarding your medical bills."
-                )
-                add_debug_message("📝 **No Medical Bills Uploaded; User Provided Notes**")
+            # Removed Medical Bills Section as per instruction
 
             medical_treatment = st.text_area(
                 "Medical Treatment Received",
@@ -933,16 +966,10 @@ def main():
                     errors.append("❌ At least one type of damage must be selected.")
                 if not zip_code:
                     errors.append("❌ ZIP/Postal Code is required.")
-                if not incident_city and (zip_code and not location):
-                    errors.append("❌ City is required.")
-                if not incident_state and (zip_code and not location):
-                    errors.append("❌ State/Province is required.")
-                if not incident_country:
-                    errors.append("❌ Country is required.")
+                if not case_type:
+                    errors.append("❌ Type of case is required.")
                 if not best_argument:
                     errors.append("❌ Best argument is required.")
-                if not uploaded_medical_bills and not st.session_state['user_data'].get('medical_bills_notes', ''):
-                    errors.append("❌ Please upload your medical bills or provide estimated amounts/notes.")
                 
                 if "Other" in damages_incurred and not other_damages:
                     errors.append("❌ Please specify your other damages.")
@@ -956,7 +983,6 @@ def main():
                         'case_type': case_type,
                         'incident_date': incident_date.strftime("%Y-%m-%d"),
                         'zip_code': zip_code,
-                        'incident_country': incident_country,
                         'incident_description': incident_description,
                         'damages_incurred': damages_incurred,
                         'medical_treatment': medical_treatment,
@@ -965,22 +991,6 @@ def main():
                     }
                     if "Other" in damages_incurred:
                         user_data_update['other_damages'] = other_damages
-                    if zip_code and location:
-                        user_data_update.update({
-                            'incident_city': incident_city,
-                            'incident_state': incident_state,
-                            'incident_location': f"{incident_city}, {incident_state}, {incident_country}",
-                        })
-                    if uploaded_medical_bills:
-                        user_data_update.update({
-                            'medical_bills_option': "Uploaded",
-                            'medical_bills_notes': ""
-                        })
-                    else:
-                        user_data_update.update({
-                            'medical_bills_option': "Estimated",
-                            'medical_bills_notes': medical_bills_notes
-                        })
                     st.session_state['user_data'].update(user_data_update)
                     st.session_state.step = 3
                     st.success("✅ **Case details saved successfully!**")
@@ -1006,8 +1016,8 @@ def main():
             
             if submitted:
                 add_debug_message("🚀 **Submitting Uploads Form**")
-                if not uploaded_documents and not uploaded_images and not st.session_state.get('uploaded_medical_bills', None):
-                    st.error("❌ **Please upload at least one document, image, or medical bill.**")
+                if not uploaded_documents and not uploaded_images:
+                    st.error("❌ **Please upload at least one document or image.**")
                     add_debug_message("❌ **No uploads provided.**")
                 else:
                     st.session_state['uploaded_documents'] = uploaded_documents
@@ -1024,7 +1034,7 @@ def main():
                 add_debug_message("⬅️ **Navigated back to Step 2**")
                 st.experimental_rerun()
 
-    # Step 4: Consent
+    # Step 4: Consent and Acknowledgements
     elif st.session_state.step == 4:
         st.header("🟠 Step 4: Consent and Acknowledgements")
         with st.form("consent_form"):
@@ -1038,7 +1048,7 @@ def main():
                 "I agree to be contacted by a lawyer regarding my case.",
                 value=st.session_state['user_data'].get('opt_in_contact', False)
             )
-            submitted = st.form_submit_button("Next")
+            submitted = st.form_submit_button("Submit")
             
             if submitted:
                 add_debug_message("🚀 **Submitting Consent Form**")
@@ -1050,9 +1060,67 @@ def main():
                         'disclaimer_agreed': disclaimer_agreed,
                         'opt_in_contact': opt_in_contact
                     })
-                    st.session_state.step = 5
-                    st.success("✅ **Consent information saved successfully!**")
-                    add_debug_message("➡️ **Moving to Step 5: Review and Submit**")
+                    st.session_state.step = 5  # Temporarily using step 5 for processing
+                    st.success("✅ **Consent information saved successfully! Processing your case...**")
+                    add_debug_message("➡️ **Consent Given. Starting Case Processing**")
+                    
+                    # Process the case
+                    with st.spinner("🔄 **Processing your case...**"):
+                        try:
+                            add_debug_message("🗂️ **Starting Report Generation Process**")
+                            # Process documents and images concurrently
+                            document_summaries = process_documents(st.session_state.get('uploaded_documents', []))
+                            image_contexts = process_images(st.session_state.get('uploaded_images', []), st.session_state['user_data'])
+                            st.session_state['document_summaries'] = document_summaries
+                            st.session_state['image_contexts'] = image_contexts
+
+                            # Retrieve SERP API credentials
+                            serp_api_key = os.getenv("SERP_API_KEY")
+                            serp_api_params = {}  # Add any additional parameters if needed
+
+                            if not serp_api_key:
+                                add_debug_message("❌ **SERP API key is missing. Legal research cannot be performed.**")
+                                st.error("❌ **Legal research cannot be performed due to missing SERP API credentials.**")
+                                st.stop()
+
+                            # Generate case info with AI agents
+                            case_info = generate_case_info(
+                                st.session_state['user_data'],
+                                document_summaries,
+                                image_contexts,
+                                serp_api_key,
+                                serp_api_params
+                            )
+                            st.session_state['case_info'] = case_info
+
+                            # MailChimp integration
+                            if st.session_state['user_data'].get('opt_in_contact', False):
+                                add_debug_message("📧 **Opt-in for MailChimp Subscription Detected**")
+                                success = add_to_mailchimp(st.session_state['user_data'], case_info)
+                                if success:
+                                    st.success("✅ **You have been subscribed to our mailing list.**")
+                                    add_debug_message("✅ **User subscribed to MailChimp.**")
+                                else:
+                                    st.error("❌ **There was an error subscribing you to our mailing list.**")
+                                    add_debug_message("❌ **MailChimp subscription failed.**")
+
+                            # Initialize chat interface
+                            initialize_chat_interface(case_info, document_summaries)
+
+                            # Generate PDF report
+                            pdf_buffer = generate_pdf_report(case_info, document_summaries, image_contexts)
+                            st.session_state['pdf_report'] = pdf_buffer
+
+                            # Generate Markdown report if needed
+                            markdown_report = generate_markdown_report(case_info, document_summaries, image_contexts)
+                            st.session_state['markdown_report'] = markdown_report
+
+                            st.session_state['report_generated'] = True
+                            st.success("✅ **Your AI report has been generated!**")
+                            add_debug_message("✅ **AI Report Generation Completed Successfully**")
+                        except Exception as e:
+                            add_debug_message(f"❌ **Error during Report Generation:** {e}")
+                            st.error("❌ **An error occurred while generating your report. Please try again later.**")
 
         # Navigation Buttons
         col1, col2 = st.columns(2)
@@ -1062,81 +1130,8 @@ def main():
                 add_debug_message("⬅️ **Navigated back to Step 3**")
                 st.experimental_rerun()
 
-    # Step 5: Review and Submit
-    elif st.session_state.step == 5:
-        st.header("🟣 Step 5: Review and Submit")
-        st.subheader("📄 **Please review the information you have provided:**")
-        st.json(st.session_state['user_data'])
-        
-        if st.button("🚀 Generate AI Report"):
-            if not st.session_state['report_generated']:
-                with st.spinner("🔄 **Processing your case...**"):
-                    try:
-                        add_debug_message("🗂️ **Starting Report Generation Process**")
-                        # Process documents and images concurrently
-                        document_summaries = process_documents(st.session_state.get('uploaded_documents', []))
-                        image_contexts = process_images(st.session_state.get('uploaded_images', []), st.session_state['user_data'])
-                        st.session_state['document_summaries'] = document_summaries
-                        st.session_state['image_contexts'] = image_contexts
-
-                        # Retrieve SERP API credentials
-                        serp_api_key = os.getenv("SERP_API_KEY")
-                        serp_api_params = {}  # Add any additional parameters if needed
-
-                        if not serp_api_key:
-                            add_debug_message("❌ **SERP API key is missing. Legal research cannot be performed.**")
-                            st.error("❌ **Legal research cannot be performed due to missing SERP API credentials.**")
-                            st.stop()
-
-                        # Generate case info with AI agents
-                        case_info = generate_case_info(
-                            st.session_state['user_data'],
-                            document_summaries,
-                            image_contexts,
-                            serp_api_key,
-                            serp_api_params
-                        )
-                        st.session_state['case_info'] = case_info
-
-                        # MailChimp integration
-                        if st.session_state['user_data'].get('opt_in_contact', False):
-                            add_debug_message("📧 **Opt-in for MailChimp Subscription Detected**")
-                            success = add_to_mailchimp(st.session_state['user_data'], case_info)
-                            if success:
-                                st.success("✅ **You have been subscribed to our mailing list.**")
-                                add_debug_message("✅ **User subscribed to MailChimp.**")
-                            else:
-                                st.error("❌ **There was an error subscribing you to our mailing list.**")
-                                add_debug_message("❌ **MailChimp subscription failed.**")
-
-                        # Initialize chat interface
-                        initialize_chat_interface(case_info, document_summaries)
-
-                        # Generate PDF report
-                        pdf_buffer = generate_pdf_report(case_info, document_summaries, image_contexts)
-                        st.session_state['pdf_report'] = pdf_buffer
-
-                        # Generate Markdown report if needed
-                        markdown_report = generate_markdown_report(case_info, document_summaries, image_contexts)
-                        st.session_state['markdown_report'] = markdown_report
-
-                        st.session_state['report_generated'] = True
-                        st.success("✅ **Your AI report has been generated!**")
-                        add_debug_message("✅ **AI Report Generation Completed Successfully**")
-                    except Exception as e:
-                        add_debug_message(f"❌ **Error during Report Generation:** {e}")
-                        st.error("❌ **An error occurred while generating your report. Please try again later.**")
-
-        # Navigation Buttons
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("⬅️ Previous"):
-                st.session_state.step = 4
-                add_debug_message("⬅️ **Navigated back to Step 4**")
-                st.experimental_rerun()
-
         # Display results page
-        if st.session_state['report_generated']:
+        if st.session_state.step == 5 and st.session_state['report_generated']:
             st.header("📑 Case Analysis Summary")
 
             st.subheader("📄 Case Overview")
@@ -1219,8 +1214,9 @@ def main():
                     # API call
                     try:
                         with st.spinner("🔄 **Generating Response...**"):
+                            add_debug_message("🤖 **Sending Chat Messages to OpenAI**")
                             response = client.chat.completions.create(
-                                model="gpt-4",  # Corrected model name
+                                model="gpt-40-mini",  # Corrected model name
                                 messages=messages,
                                 temperature=0.45,
                                 max_tokens=1500,
@@ -1228,10 +1224,12 @@ def main():
                                 frequency_penalty=0,
                                 presence_penalty=0
                             )
+                            add_debug_message(f"🤖 **OpenAI Chat API Response:** {json.dumps(response)}")
                             assistant_message = response['choices'][0]['message']['content'].strip()
                             st.session_state['chat_history'].append({'role': 'assistant', 'content': assistant_message})
                             st.markdown(f"**Assistant:** {assistant_message}")
                     except Exception as e:
+                        add_debug_message(f"❌ **Chat API Error:** {e}")
                         st.error("❌ **An error occurred while communicating with the assistant. Please try again later.**")
 
             # Reset Chat Button
